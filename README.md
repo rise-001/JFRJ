@@ -54,6 +54,56 @@ ghcr.io/rise-001/jfrj:latest
 
 ## Docker 部署
 
+### 直接使用镜像（纯 Docker）
+
+服务器只需安装 Docker Engine，无需下载项目源码。镜像支持 `linux/amd64` 和 `linux/arm64`：
+
+```text
+ghcr.io/rise-001/jfrj:latest
+```
+
+1. 创建宿主机数据目录，并允许容器内 UID `1000` 的 `node` 用户写入：
+
+   ```bash
+   sudo mkdir -p /opt/JFRJ
+   sudo chown -R 1000:1000 /opt/JFRJ
+   sudo chmod 700 /opt/JFRJ
+   ```
+
+2. 拉取镜像并启动容器：
+
+   ```bash
+   docker pull ghcr.io/rise-001/jfrj:latest
+   docker run -d --name jfrj --restart unless-stopped -p 3001:3000 -e PORT=3000 -e DATA_DIR=/app/data -e SESSION_HOURS=12 -e APP_TIMEZONE=Asia/Shanghai -e COOKIE_SECURE=false -v /opt/JFRJ:/app/data --read-only --tmpfs /tmp:size=16m --security-opt no-new-privileges:true ghcr.io/rise-001/jfrj:latest
+   ```
+
+   未设置 `ADMIN_PASSWORD` 时，首次打开页面会要求创建至少 8 位的管理员密码。初始化完成前，建议在云服务器安全组中仅允许自己的 IP 访问 TCP `3001`，避免其他人抢先创建管理员。
+
+3. 检查服务并访问 `http://服务器IP:3001`：
+
+   ```bash
+   docker ps --filter name=jfrj
+   docker logs --since 30s jfrj
+   curl http://127.0.0.1:3001/health
+   ```
+
+   如果日志出现 `EACCES: permission denied, open '/app/data/.config-key'`，重新执行第一步的 `chown` 和 `chmod`，然后使用 `docker restart jfrj` 重启。
+
+升级镜像时，先拉取新镜像，再重建容器：
+
+```bash
+docker pull ghcr.io/rise-001/jfrj:latest
+docker rm -f jfrj
+docker run -d --name jfrj --restart unless-stopped -p 3001:3000 -e PORT=3000 -e DATA_DIR=/app/data -e SESSION_HOURS=12 -e APP_TIMEZONE=Asia/Shanghai -e COOKIE_SECURE=false -v /opt/JFRJ:/app/data --read-only --tmpfs /tmp:size=16m --security-opt no-new-privileges:true ghcr.io/rise-001/jfrj:latest
+docker image prune -f
+```
+
+管理员配置、模型配置、加密密钥和 SQLite 数据库均保存在宿主机的 `/opt/JFRJ`，删除或重建 `jfrj` 容器不会丢失这些数据。不要在升级时删除该目录。
+
+使用 Nginx 或 Caddy 配置 HTTPS 反向代理时，将端口参数改为 `-p 127.0.0.1:3001:3000`，并将环境变量改为 `-e COOKIE_SECURE=true`。
+
+### 使用 Docker Compose
+
 服务器需要预先安装 Docker Engine 和 Docker Compose v2。部署步骤：
 
 1. 拉取项目并进入目录：

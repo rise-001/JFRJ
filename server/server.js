@@ -185,7 +185,7 @@ async function callVisionModel(image, config, fetchImpl) {
       {
         role: "user",
         content: [
-          { type: "text", text: "识别这张体重秤或智能秤 App 截图中的当前体重。" },
+          { type: "text", text: "图片上的体重是多少，直接输出数据" },
           { type: "image_url", image_url: { url: image } }
         ]
       }

@@ -95,6 +95,7 @@ test("识别接口转发图片并规范化模型结果", async (t) => {
   assert.match(recognition.recognitionId, /^[0-9a-f-]{36}$/);
   assert.equal(upstreamRequest.url, "https://example.test/v1/chat/completions");
   assert.equal(upstreamRequest.init.headers.Authorization, "Bearer test-key");
+  assert.equal(upstreamRequest.body.messages[1].content[0].text, "图片上的体重是多少，直接输出数据");
   assert.equal(upstreamRequest.body.messages[1].content[1].image_url.url, "data:image/png;base64,iVBORw0KGgo=");
 
   const dashboardBeforeConfirm = await fetch(`${baseUrl}/api/dashboard`, { headers: { Cookie: cookie } });
