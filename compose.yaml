@@ -39,3 +39,4 @@ services:
 
 volumes:
   qingying-data:
+    name: qingying-data
