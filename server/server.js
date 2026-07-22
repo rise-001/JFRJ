@@ -143,14 +143,32 @@ function parseJsonCandidate(text) {
   }
 }
 
+function parseDirectWeight(text) {
+  const trimmed = text.trim().replace(/^```(?:text)?\s*/i, "").replace(/\s*```$/i, "");
+  const match = trimmed.match(/^(-?(?:\d+(?:\.\d+)?|\.\d+))\s*(kg|公斤|千克|jin|斤|lbs?|磅)?$/i);
+  if (!match) return null;
+  return { weight: Number(match[1]), unit: match[2] || "斤" };
+}
+
 function parseModelContent(content) {
   const text = extractTextContent(content);
-  const payload = parseJsonCandidate(text);
+  let payload;
+  try {
+    payload = parseJsonCandidate(text);
+  } catch {
+    payload = parseDirectWeight(text);
+  }
+
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+    payload = parseDirectWeight(String(payload ?? ""));
+  }
+  if (!payload) throw new Error("模型未返回可解析的体重数据");
+
   let weight = Number(payload.weightKg ?? payload.weight_kg ?? payload.weight ?? payload.value);
   const unit = String(payload.unit || "kg").toLowerCase();
 
   if (unit === "斤" || unit === "jin") weight /= 2;
-  if (unit === "lb" || unit === "lbs") weight /= 2.2046226218;
+  if (unit === "lb" || unit === "lbs" || unit === "磅") weight /= 2.2046226218;
   if (!Number.isFinite(weight) || weight < 30 || weight > 250) {
     throw new Error("未识别到 30 至 250 kg 之间的有效体重");
   }
@@ -180,7 +198,7 @@ async function callVisionModel(image, config, fetchImpl) {
     messages: [
       {
         role: "system",
-        content: "你是体重截图识别器。只读取图片中明确显示的当前体重。只返回 JSON 对象，格式为 {\"weightKg\":65.4,\"unit\":\"kg\",\"confidence\":0.98}。将斤或磅换算为 kg；无法确定时 weightKg 返回 null。不要返回 Markdown。"
+        content: "你是体重截图识别器。只读取图片中明确显示的当前体重。该体重秤显示单位为斤；单位不清晰或只看到数字时也按斤读取，并换算为 kg。显示屏可能倒置或旋转，请先按正确方向读取。只返回 JSON 对象，格式为 {\"weightKg\":52.35,\"unit\":\"kg\",\"confidence\":0.98}。无法确定时 weightKg 返回 null。不要返回 Markdown。"
       },
       {
         role: "user",

@@ -56,6 +56,21 @@ test("解析标准 JSON、代码块和斤单位", () => {
     unit: "kg",
     confidence: 95
   });
+  assert.deepEqual(parseModelContent("104.7"), {
+    weight: 52.4,
+    unit: "kg",
+    confidence: 90
+  });
+  assert.deepEqual(parseModelContent("209.4 斤"), {
+    weight: 104.7,
+    unit: "kg",
+    confidence: 90
+  });
+  assert.deepEqual(parseModelContent('"104.7 kg"'), {
+    weight: 104.7,
+    unit: "kg",
+    confidence: 90
+  });
   assert.throws(() => parseModelContent('{"weightKg":65.4,"confidence":0.84}'), /可信度不足/);
 });
 
@@ -95,6 +110,7 @@ test("识别接口转发图片并规范化模型结果", async (t) => {
   assert.match(recognition.recognitionId, /^[0-9a-f-]{36}$/);
   assert.equal(upstreamRequest.url, "https://example.test/v1/chat/completions");
   assert.equal(upstreamRequest.init.headers.Authorization, "Bearer test-key");
+  assert.match(upstreamRequest.body.messages[0].content, /显示单位为斤/);
   assert.equal(upstreamRequest.body.messages[1].content[0].text, "图片上的体重是多少，直接输出数据");
   assert.equal(upstreamRequest.body.messages[1].content[1].image_url.url, "data:image/png;base64,iVBORw0KGgo=");
 
