@@ -1,0 +1,41 @@
+services:
+  qingying:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: qingying-ai-weight-assistant:latest
+    container_name: qingying
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    environment:
+      PORT: "3000"
+      AI_API_URL: "${AI_API_URL:-https://yunllm.com/v1/chat/completions}"
+      AI_API_KEY: "${AI_API_KEY:-}"
+      AI_MODEL: "${AI_MODEL:-gpt-4o}"
+      AI_TIMEOUT_MS: "${AI_TIMEOUT_MS:-45000}"
+      AI_JSON_MODE: "${AI_JSON_MODE:-true}"
+      MAX_IMAGE_BYTES: "${MAX_IMAGE_BYTES:-8388608}"
+      MAX_BODY_BYTES: "${MAX_BODY_BYTES:-12582912}"
+      DATA_DIR: "/app/data"
+      CONFIG_SECRET: "${CONFIG_SECRET:-}"
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:-}"
+      SESSION_HOURS: "${SESSION_HOURS:-12}"
+      APP_TIMEZONE: "${APP_TIMEZONE:-Asia/Shanghai}"
+      COOKIE_SECURE: "${COOKIE_SECURE:-false}"
+    volumes:
+      - qingying-data:/app/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+volumes:
+  qingying-data:
