@@ -285,8 +285,8 @@ export default function App() {
             <Stat label="连续记录" value={`${stats.streak} 天`} detail={stats.streak ? "保持稳定记录" : "今天可以重新开始"} />
           </section>
 
-          <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1.55fr)_minmax(310px,.75fr)]">
-            <Card id="trend" className="scroll-mt-6 border-stone-200/80 bg-white/80 shadow-soft">
+          <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(310px,.75fr)_minmax(0,1.55fr)]">
+            <Card id="trend" className="scroll-mt-6 border-stone-200/80 bg-white/80 shadow-soft xl:col-start-2 xl:row-start-1">
               <CardHeader className="flex-row items-start justify-between space-y-0 pb-0">
                 <div><p className="text-xs font-medium text-muted-foreground">体重趋势</p><div className="mt-2 flex items-baseline gap-2"><strong className="text-4xl leading-none">{stats.hasEntries ? stats.current.toFixed(1) : "--"}</strong>{stats.hasEntries && <span className="text-sm text-muted-foreground">kg</span>}</div><p className={`mt-2 text-xs ${stats.hasEntries && stats.monthChange <= 0 ? "text-emerald-700" : "text-muted-foreground"}`}>{stats.hasEntries ? `近 30 天 ${signedWeight(stats.monthChange)}` : "等待首次 AI 识别"}</p></div>
                 <Tabs value={range} onValueChange={setRange}><TabsList><TabsTrigger value="recent">近 7 次</TabsTrigger><TabsTrigger value="month">30 天</TabsTrigger></TabsList></Tabs>
@@ -294,7 +294,11 @@ export default function App() {
               <CardContent className="pt-2"><WeightChart entries={trendEntries} goalWeight={dashboard.profile.goalWeight} /></CardContent>
             </Card>
 
-            <aside className="grid content-start gap-4">
+            <aside className="grid content-start gap-4 xl:col-start-1 xl:row-start-1">
+              <Card id="wallet" className="wallet-surface scroll-mt-6 overflow-hidden border-0 text-white shadow-peach">
+                <CardContent className="p-5"><div className="flex items-center justify-between"><p className="text-xs text-white/75">轻盈钱包</p><WalletCards className="h-5 w-5 text-white/80" /></div><strong className="mt-3 block text-3xl">¥{stats.wallet.toLocaleString("zh-CN")}</strong><p className="mt-2 text-[10px] text-white/70">每减 0.1 kg，奖励 20 元虚拟币</p></CardContent>
+              </Card>
+
               <Card className="border-stone-200/80 bg-white/80 shadow-soft">
                 <CardContent className="p-5">
                   <div className="flex items-center justify-between"><div><p className="text-xs text-muted-foreground">今天记一下</p><p className="mt-1 text-sm font-semibold">只使用 AI 识别，保证数据一致</p></div><Scale className="h-5 w-5 text-primary" /></div>
@@ -309,10 +313,6 @@ export default function App() {
                   <Progress value={stats.progress} className="mt-4 h-2 bg-emerald-100 [&>div]:bg-emerald-600" />
                   <div className="mt-3 flex justify-between text-[10px] text-muted-foreground"><span>{dashboard.profile.startWeight.toFixed(1)} kg</span><span>{dashboard.profile.goalWeight.toFixed(1)} kg</span></div>
                 </CardContent>
-              </Card>
-
-              <Card id="wallet" className="wallet-surface scroll-mt-6 overflow-hidden border-0 text-white shadow-peach">
-                <CardContent className="p-5"><div className="flex items-center justify-between"><p className="text-xs text-white/75">轻盈钱包</p><WalletCards className="h-5 w-5 text-white/80" /></div><strong className="mt-3 block text-3xl">¥{stats.wallet.toLocaleString("zh-CN")}</strong><p className="mt-2 text-[10px] text-white/70">每减 0.1 kg，奖励 20 元虚拟币</p></CardContent>
               </Card>
             </aside>
           </div>
