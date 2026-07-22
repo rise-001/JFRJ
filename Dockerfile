@@ -1,4 +1,8 @@
-FROM node:22-alpine AS builder
+# syntax=docker/dockerfile:1
+
+# The Vite output is architecture-independent, so build it once on the
+# runner's native platform instead of repeating npm/Vite under QEMU.
+FROM --platform=$BUILDPLATFORM node:22-alpine AS builder
 
 WORKDIR /app
 
