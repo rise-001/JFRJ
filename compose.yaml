@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: qingying-ai-weight-assistant:latest
+    image: "${QINGYING_IMAGE:-ghcr.io/rise-001/jfrj:latest}"
     container_name: qingying
     restart: unless-stopped
     ports:

@@ -35,6 +35,23 @@
 └── .env.example
 ```
 
+## GitHub Docker 镜像
+
+项目通过 GitHub Actions 自动构建 `linux/amd64` 和 `linux/arm64` 镜像并发布到 GitHub Container Registry：
+
+```text
+ghcr.io/rise-001/jfrj:latest
+```
+
+以下操作会触发镜像构建：
+
+- 推送到 `main`：发布 `latest` 和 `sha-<提交号>` 标签。
+- 推送 `v*` 版本标签：发布对应版本标签，例如 `v1.0.0`、`1.0.0` 和 `1.0`。
+- Pull Request：仅验证镜像可以构建，不发布镜像。
+- 在 GitHub Actions 页面手动运行 `Build and publish Docker image`。
+
+首次发布后，可在 GitHub 仓库的 Packages 页面将镜像可见性设置为 Public，服务器即可免登录拉取。
+
 ## Docker 部署
 
 服务器需要预先安装 Docker Engine 和 Docker Compose v2。部署步骤：
@@ -54,7 +71,14 @@
 
 3. 可按需编辑 `.env` 中的端口和会话配置。API Key 不需要写入文件；首次登录后可在系统设置中保存。
 
-4. 构建并启动：
+4. 拉取 GitHub 已构建的镜像并启动：
+
+   ```bash
+   docker compose pull
+   docker compose up -d --no-build
+   ```
+
+   如需在服务器上从源码重新构建，可改用：
 
    ```bash
    docker compose up -d --build
@@ -83,7 +107,8 @@
 
 ```bash
 git pull
-docker compose up -d --build
+docker compose pull
+docker compose up -d --no-build
 docker image prune -f
 ```
 
