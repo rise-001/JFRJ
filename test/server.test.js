@@ -135,6 +135,40 @@ test("识别接口转发图片并规范化模型结果", async (t) => {
   assert.equal((await duplicateConfirm.json()).code, "RECOGNITION_EXPIRED");
 });
 
+test("上游不支持 JSON 输出模式时自动重试识图请求", async (t) => {
+  const requests = [];
+  const { config, settingsStore } = createTestConfig(t, { apiKey: "test-key", adminPassword: "secure-pass-123" });
+  const server = createAppServer({
+    config,
+    settingsStore,
+    fetchImpl: async (url, init) => {
+      const body = JSON.parse(init.body);
+      requests.push({ url, body });
+      if (requests.length === 1) {
+        return new Response(JSON.stringify({ error: { message: "response_format is not supported" } }), { status: 400 });
+      }
+      return new Response(JSON.stringify({ choices: [{ message: { content: '{"weightKg":60,"confidence":0.95}' } }] }), { status: 200 });
+    }
+  });
+
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  cleanupServer(t, server, config.dataDir);
+  const address = server.address();
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  const cookie = await login(baseUrl);
+  const response = await fetch(`${baseUrl}/api/recognize-weight`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Cookie: cookie },
+    body: JSON.stringify({ image: "data:image/png;base64,iVBORw0KGgo=" })
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).weight, 60);
+  assert.equal(requests.length, 2);
+  assert.deepEqual(requests[0].body.response_format, { type: "json_object" });
+  assert.equal(requests[1].body.response_format, undefined);
+});
+
 test("未配置密钥时返回明确状态", async (t) => {
   const { config, settingsStore } = createTestConfig(t, { adminPassword: "secure-pass-123" });
   const server = createAppServer({ config, settingsStore });

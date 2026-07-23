@@ -213,33 +213,43 @@ async function callVisionModel(image, config, fetchImpl) {
   if (config.jsonMode) requestBody.response_format = { type: "json_object" };
 
   try {
-    const upstream = await fetchImpl(config.apiUrl, {
-      method: "POST",
-      headers: {
-        Accept: "application/json",
-        Authorization: `Bearer ${config.apiKey}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(requestBody),
-      signal: controller.signal
-    });
+    let retriedWithoutJsonMode = false;
+    while (true) {
+      const upstream = await fetchImpl(config.apiUrl, {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${config.apiKey}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(requestBody),
+        signal: controller.signal
+      });
 
-    const responseText = await upstream.text();
-    let responseData;
-    try {
-      responseData = JSON.parse(responseText);
-    } catch {
-      throw Object.assign(new Error("大模型服务返回了无效响应"), { statusCode: 502 });
+      const responseText = await upstream.text();
+      let responseData;
+      try {
+        responseData = JSON.parse(responseText);
+      } catch {
+        throw Object.assign(new Error("大模型服务返回了无效响应"), { statusCode: 502 });
+      }
+
+      if (!upstream.ok) {
+        const upstreamMessage = responseData?.error?.message || responseData?.message || `HTTP ${upstream.status}`;
+        const rejectsJsonMode = config.jsonMode && !retriedWithoutJsonMode && [400, 422].includes(upstream.status)
+          && /response[_ ]format|json[_ ]object/i.test(upstreamMessage);
+        if (rejectsJsonMode) {
+          retriedWithoutJsonMode = true;
+          delete requestBody.response_format;
+          continue;
+        }
+        throw Object.assign(new Error(`大模型调用失败：${upstreamMessage}`), { statusCode: 502 });
+      }
+
+      const content = responseData?.choices?.[0]?.message?.content;
+      if (!content) throw Object.assign(new Error("大模型未返回识别结果"), { statusCode: 502 });
+      return parseModelContent(content);
     }
-
-    if (!upstream.ok) {
-      const upstreamMessage = responseData?.error?.message || responseData?.message || `HTTP ${upstream.status}`;
-      throw Object.assign(new Error(`大模型调用失败：${upstreamMessage}`), { statusCode: 502 });
-    }
-
-    const content = responseData?.choices?.[0]?.message?.content;
-    if (!content) throw Object.assign(new Error("大模型未返回识别结果"), { statusCode: 502 });
-    return parseModelContent(content);
   } catch (error) {
     if (error.name === "AbortError") {
       throw Object.assign(new Error("大模型识别超时，请重试"), { statusCode: 504 });
