@@ -61,6 +61,32 @@ function CoinRain() {
   return <div className="pointer-events-none fixed inset-0 z-[60] overflow-hidden" aria-hidden="true">{Array.from({ length: 24 }, (_, index) => <span key={index} className="rain-coin animate-coin-fall" style={{ left: `${(index * 37) % 96}%`, "--duration": `${2.4 + (index % 7) * 0.24}s`, "--delay": `${(index % 9) * 0.11}s` }}>¥</span>)}</div>;
 }
 
+const WALLET_COINS = [
+  { left: "54%", top: "17%", size: 12, delay: "-1.1s", duration: "5.8s", drift: "-8px" },
+  { left: "65%", top: "58%", size: 18, delay: "-3.8s", duration: "6.4s", drift: "6px" },
+  { left: "73%", top: "29%", size: 14, delay: "-2.2s", duration: "5.5s", drift: "-5px" },
+  { left: "81%", top: "67%", size: 22, delay: "-4.6s", duration: "6.8s", drift: "8px" },
+  { left: "87%", top: "39%", size: 16, delay: "-.5s", duration: "6.1s", drift: "-6px" },
+  { left: "92%", top: "77%", size: 11, delay: "-3s", duration: "5.7s", drift: "4px" },
+  { left: "59%", top: "79%", size: 10, delay: "-5.1s", duration: "6.6s", drift: "7px" }
+];
+
+function WalletCoinScatter() {
+  return (
+    <div className="wallet-coin-scatter" aria-hidden="true">
+      {WALLET_COINS.map((coin, index) => (
+        <span
+          key={index}
+          className="wallet-scatter-coin"
+          style={{ left: coin.left, top: coin.top, width: coin.size, height: coin.size, fontSize: Math.max(7, Math.round(coin.size * .42)), "--delay": coin.delay, "--duration": coin.duration, "--drift-x": coin.drift }}
+        >
+          ¥
+        </span>
+      ))}
+    </div>
+  );
+}
+
 function AnimatedWalletBalance({ value }) {
   const [displayValue, setDisplayValue] = useState(0);
   const displayedValueRef = useRef(0);
@@ -329,6 +355,7 @@ export default function App() {
 
             <aside className="grid content-start gap-4 xl:col-start-1 xl:row-start-1">
               <Card id="wallet" className="wallet-surface relative isolate scroll-mt-6 overflow-hidden border-0 text-white shadow-peach">
+                <WalletCoinScatter />
                 <CardContent className="relative z-10 p-5"><div className="flex items-center justify-between"><p className="text-xs text-white/75">轻盈钱包</p><span className="wallet-icon-motion" aria-hidden="true"><WalletCards className="h-5 w-5 text-white/80" /></span></div><AnimatedWalletBalance value={stats.wallet} /><p className="mt-2 text-[10px] text-white/70">每减 0.2 斤，奖励 20 元虚拟币</p></CardContent>
               </Card>
 
