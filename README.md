@@ -74,7 +74,7 @@ ghcr.io/rise-001/jfrj:latest
 
    ```bash
    docker pull ghcr.io/rise-001/jfrj:latest
-   docker run -d --name jfrj --restart unless-stopped -p 3001:3000 -e PORT=3000 -e DATA_DIR=/app/data -e SESSION_HOURS=12 -e APP_TIMEZONE=Asia/Shanghai -e COOKIE_SECURE=false -v /opt/JFRJ:/app/data --read-only --tmpfs /tmp:size=16m --security-opt no-new-privileges:true ghcr.io/rise-001/jfrj:latest
+   docker run -d --name jfrj --restart unless-stopped -p 3001:3000 -e PORT=3000 -e DATA_DIR=/app/data -e APP_TIMEZONE=Asia/Shanghai -e COOKIE_SECURE=false -v /opt/JFRJ:/app/data --read-only --tmpfs /tmp:size=16m --security-opt no-new-privileges:true ghcr.io/rise-001/jfrj:latest
    ```
 
    未设置 `ADMIN_PASSWORD` 时，首次打开页面会要求创建至少 8 位的管理员密码。初始化完成前，建议在云服务器安全组中仅允许自己的 IP 访问 TCP `3001`，避免其他人抢先创建管理员。
@@ -94,7 +94,7 @@ ghcr.io/rise-001/jfrj:latest
 ```bash
 docker pull ghcr.io/rise-001/jfrj:latest
 docker rm -f jfrj
-docker run -d --name jfrj --restart unless-stopped -p 3001:3000 -e PORT=3000 -e DATA_DIR=/app/data -e SESSION_HOURS=12 -e APP_TIMEZONE=Asia/Shanghai -e COOKIE_SECURE=false -v /opt/JFRJ:/app/data --read-only --tmpfs /tmp:size=16m --security-opt no-new-privileges:true ghcr.io/rise-001/jfrj:latest
+docker run -d --name jfrj --restart unless-stopped -p 3001:3000 -e PORT=3000 -e DATA_DIR=/app/data -e APP_TIMEZONE=Asia/Shanghai -e COOKIE_SECURE=false -v /opt/JFRJ:/app/data --read-only --tmpfs /tmp:size=16m --security-opt no-new-privileges:true ghcr.io/rise-001/jfrj:latest
 docker image prune -f
 ```
 
@@ -184,7 +184,6 @@ docker run --rm -v qingying-data:/data -v "$PWD":/backup alpine \
 | `MAX_IMAGE_BYTES` | `8388608` | 图片最大字节数，默认 8 MB |
 | `MAX_BODY_BYTES` | `12582912` | HTTP 请求体最大字节数，默认 12 MB |
 | `ADMIN_PASSWORD` | 空 | 可选的初始管理员密码；留空时由首次访问创建 |
-| `SESSION_HOURS` | `12` | 管理员登录有效时间 |
 | `COOKIE_SECURE` | `false` | 仅通过 HTTPS 部署时设为 `true` |
 | `CONFIG_SECRET` | 空 | 可选的固定加密密钥；留空时在数据卷自动生成 |
 | `DATA_DIR` | `项目/data` | 加密配置存储目录，容器内为 `/app/data` |
@@ -241,4 +240,4 @@ npm test
 - `GET/PUT /api/admin/settings`：读取掩码配置或保存模型配置，需要登录。
 - `PUT /api/admin/password`：修改管理员密码，需要登录。
 
-体重目标、AI 识别产生的记录和奖励账本保存在 `DATA_DIR/qingying.sqlite` SQLite 数据库中，浏览器不再保存业务数据。新版不生成演示数据，也不会导入旧版固定趋势数据，首次使用时趋势和钱包均为空。SQLite 文件位于 Docker 数据卷内，备份该数据卷即可迁移记录。若要支持多用户，应为记录增加用户 ID 和权限隔离。
+体重目标、AI 识别产生的记录和奖励账本保存在 `DATA_DIR/qingying.sqlite` SQLite 数据库中，浏览器不再保存业务数据。管理员登录会话同样持久化在 `DATA_DIR`，仅在主动退出或修改密码时失效。新版不生成演示数据，也不会导入旧版固定趋势数据，首次使用时趋势和钱包均为空。SQLite 文件位于 Docker 数据卷内，备份该数据卷即可迁移记录。若要支持多用户，应为记录增加用户 ID 和权限隔离。

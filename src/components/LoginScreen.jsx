@@ -90,8 +90,6 @@ export function LoginScreen({ setupRequired, onAuthenticated }) {
               {error && <p role="alert" className="rounded-md border border-red-100 bg-red-50 px-3 py-2.5 text-sm text-destructive">{error}</p>}
               <Button className="h-12 w-full bg-[#b84f47] text-white shadow-none hover:bg-[#a3413a] focus-visible:ring-[#b84f47]/30" disabled={busy}>{busy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}{setupRequired ? "创建并进入" : "安全登录"}</Button>
             </form>
-
-            <div className="mt-7 flex items-center justify-center gap-2 border-t pt-5 text-[10px] text-muted-foreground"><ShieldCheck className="h-3.5 w-3.5 text-emerald-700" />密码哈希保护 · 会话到期自动退出</div>
           </div>
         </section>
       </main>

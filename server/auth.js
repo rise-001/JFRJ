@@ -1,6 +1,9 @@
+const fs = require("node:fs");
+const path = require("node:path");
 const { randomBytes } = require("node:crypto");
 
 const COOKIE_NAME = "qingying_admin";
+const COOKIE_MAX_AGE_SECONDS = 10 * 365 * 24 * 60 * 60;
 
 function parseCookies(header = "") {
   return header.split(";").reduce((cookies, item) => {
@@ -14,22 +17,35 @@ function parseCookies(header = "") {
 }
 
 class AdminAuth {
-  constructor({ sessionHours = 12, cookieSecure = false } = {}) {
-    this.sessionTtlMs = sessionHours * 60 * 60 * 1000;
+  constructor({ dataDir = path.join(__dirname, "..", "data"), cookieSecure = false } = {}) {
     this.cookieSecure = cookieSecure;
-    this.sessions = new Map();
+    this.sessionsPath = path.join(dataDir, "admin-sessions.json");
+    fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+    this.sessions = this.loadSessions();
     this.attempts = new Map();
+  }
+
+  loadSessions() {
+    if (!fs.existsSync(this.sessionsPath)) return new Set();
+    try {
+      const tokens = JSON.parse(fs.readFileSync(this.sessionsPath, "utf8"));
+      return new Set(Array.isArray(tokens) ? tokens.filter((token) => typeof token === "string" && token.length === 43) : []);
+    } catch {
+      return new Set();
+    }
+  }
+
+  saveSessions() {
+    const tempPath = `${this.sessionsPath}.tmp`;
+    fs.writeFileSync(tempPath, `${JSON.stringify([...this.sessions])}\n`, { mode: 0o600 });
+    fs.renameSync(tempPath, this.sessionsPath);
   }
 
   getSession(request) {
     const token = parseCookies(request.headers.cookie)[COOKIE_NAME];
     if (!token) return null;
-    const session = this.sessions.get(token);
-    if (!session || session.expiresAt <= Date.now()) {
-      this.sessions.delete(token);
-      return null;
-    }
-    return { token, ...session };
+    if (!this.sessions.has(token)) return null;
+    return { token };
   }
 
   isAuthenticated(request) {
@@ -38,18 +54,31 @@ class AdminAuth {
 
   createSession(response) {
     const token = randomBytes(32).toString("base64url");
-    const expiresAt = Date.now() + this.sessionTtlMs;
-    this.sessions.set(token, { expiresAt });
+    this.sessions.add(token);
+    this.saveSessions();
     const secure = this.cookieSecure ? "; Secure" : "";
     response.setHeader(
       "Set-Cookie",
-      `${COOKIE_NAME}=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${Math.floor(this.sessionTtlMs / 1000)}${secure}`
+      `${COOKIE_NAME}=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${COOKIE_MAX_AGE_SECONDS}${secure}`
     );
   }
 
   destroySession(request, response) {
     const session = this.getSession(request);
-    if (session) this.sessions.delete(session.token);
+    if (session) {
+      this.sessions.delete(session.token);
+      this.saveSessions();
+    }
+    this.clearSessionCookie(response);
+  }
+
+  destroyAllSessions(response) {
+    this.sessions.clear();
+    this.saveSessions();
+    if (response) this.clearSessionCookie(response);
+  }
+
+  clearSessionCookie(response) {
     const secure = this.cookieSecure ? "; Secure" : "";
     response.setHeader("Set-Cookie", `${COOKIE_NAME}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0${secure}`);
   }

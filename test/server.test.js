@@ -20,7 +20,6 @@ function createTestConfig(t, overrides = {}) {
     dataDir,
     configSecret: "test-only-secret",
     adminPassword: "",
-    sessionHours: 12,
     cookieSecure: false,
     ...overrides
   };

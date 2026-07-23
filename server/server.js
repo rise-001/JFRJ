@@ -44,7 +44,6 @@ function getConfig(env = process.env) {
     dataDir: env.DATA_DIR || path.join(__dirname, "..", "data"),
     configSecret: env.CONFIG_SECRET || "",
     adminPassword: env.ADMIN_PASSWORD || "",
-    sessionHours: numberFromEnv(env.SESSION_HOURS, 12),
     cookieSecure: env.COOKIE_SECURE === "true",
     timeZone: env.APP_TIMEZONE || "Asia/Shanghai"
   };
@@ -386,6 +385,7 @@ function createAppServer(options = {}) {
           return;
         }
         const body = await readJsonBody(request, 32 * 1024);
+        auth.destroyAllSessions();
         settingsStore.createAdmin(body.password);
         auth.createSession(response);
         sendJson(response, 201, { success: true });
@@ -447,7 +447,7 @@ function createAppServer(options = {}) {
       try {
         const body = await readJsonBody(request, 32 * 1024);
         settingsStore.changeAdminPassword(body.currentPassword, body.nextPassword);
-        auth.destroySession(request, response);
+        auth.destroyAllSessions(response);
         sendJson(response, 200, { success: true, reloginRequired: true });
       } catch (error) {
         sendJson(response, 400, { error: error.message, code: "PASSWORD_UPDATE_FAILED" });
