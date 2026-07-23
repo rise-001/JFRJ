@@ -61,6 +61,36 @@ function CoinRain() {
   return <div className="pointer-events-none fixed inset-0 z-[60] overflow-hidden" aria-hidden="true">{Array.from({ length: 24 }, (_, index) => <span key={index} className="rain-coin animate-coin-fall" style={{ left: `${(index * 37) % 96}%`, "--duration": `${2.4 + (index % 7) * 0.24}s`, "--delay": `${(index % 9) * 0.11}s` }}>¥</span>)}</div>;
 }
 
+function AnimatedWalletBalance({ value }) {
+  const [displayValue, setDisplayValue] = useState(0);
+  const displayedValueRef = useRef(0);
+
+  useEffect(() => {
+    const from = displayedValueRef.current;
+    if (from === value || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      displayedValueRef.current = value;
+      setDisplayValue(value);
+      return undefined;
+    }
+
+    const startedAt = performance.now();
+    const duration = 700;
+    let animationFrame;
+    function update(now) {
+      const progress = Math.min(1, (now - startedAt) / duration);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      const nextValue = Math.round(from + (value - from) * eased);
+      displayedValueRef.current = nextValue;
+      setDisplayValue(nextValue);
+      if (progress < 1) animationFrame = window.requestAnimationFrame(update);
+    }
+    animationFrame = window.requestAnimationFrame(update);
+    return () => window.cancelAnimationFrame(animationFrame);
+  }, [value]);
+
+  return <strong className="wallet-balance mt-3 block text-3xl" aria-label={`钱包余额 ${value} 元`}><span aria-hidden="true">¥{displayValue.toLocaleString("zh-CN")}</span></strong>;
+}
+
 function Stat({ label, value, detail, tone = "default" }) {
   return (
     <div className="min-w-0 px-4 py-4 sm:px-5">
@@ -298,8 +328,8 @@ export default function App() {
             </Card>
 
             <aside className="grid content-start gap-4 xl:col-start-1 xl:row-start-1">
-              <Card id="wallet" className="wallet-surface scroll-mt-6 overflow-hidden border-0 text-white shadow-peach">
-                <CardContent className="p-5"><div className="flex items-center justify-between"><p className="text-xs text-white/75">轻盈钱包</p><WalletCards className="h-5 w-5 text-white/80" /></div><strong className="mt-3 block text-3xl">¥{stats.wallet.toLocaleString("zh-CN")}</strong><p className="mt-2 text-[10px] text-white/70">每减 0.2 斤，奖励 20 元虚拟币</p></CardContent>
+              <Card id="wallet" className="wallet-surface relative isolate scroll-mt-6 overflow-hidden border-0 text-white shadow-peach">
+                <CardContent className="relative z-10 p-5"><div className="flex items-center justify-between"><p className="text-xs text-white/75">轻盈钱包</p><span className="wallet-icon-motion" aria-hidden="true"><WalletCards className="h-5 w-5 text-white/80" /></span></div><AnimatedWalletBalance value={stats.wallet} /><p className="mt-2 text-[10px] text-white/70">每减 0.2 斤，奖励 20 元虚拟币</p></CardContent>
               </Card>
 
               <Card className="border-stone-200/80 bg-white/80 shadow-soft">

@@ -61,6 +61,29 @@
     radial-gradient(rgba(255,255,255,.24) .7px, transparent .7px) 0 0 / 8px 8px,
     linear-gradient(135deg, #f5a59b 0%, #ee8981 55%, #df746e 100%);
 }
+.wallet-surface::before {
+  content: "";
+  position: absolute;
+  inset: -120% -60%;
+  z-index: 0;
+  background: linear-gradient(110deg, transparent 44%, rgba(255,255,255,.22) 49%, rgba(255,255,255,.08) 53%, transparent 58%);
+  transform: translateX(-42%);
+  animation: wallet-shimmer 5.2s ease-in-out infinite;
+  pointer-events: none;
+}
+.wallet-icon-motion { display: inline-flex; animation: wallet-icon-float 3.4s ease-in-out infinite; }
+.wallet-balance { font-variant-numeric: tabular-nums; }
+
+@keyframes wallet-shimmer {
+  0%, 58% { transform: translateX(-42%); opacity: 0; }
+  66% { opacity: 1; }
+  84%, 100% { transform: translateX(42%); opacity: 0; }
+}
+
+@keyframes wallet-icon-float {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  50% { transform: translateY(-3px) rotate(4deg); }
+}
 
 .bonus-coins { position: absolute; right: 18px; top: 31px; width: 138px; height: 125px; perspective: 600px; }
 .bonus-coin { position: absolute; display: grid; place-items: center; border: 5px solid #ffd978; border-radius: 50%; background: linear-gradient(145deg, #fff6c4 0%, #ffd36a 32%, #efa43e 72%, #d7832c 100%); box-shadow: inset -8px -9px 15px rgba(176,98,22,.24), inset 7px 8px 10px rgba(255,255,255,.55), 0 14px 20px rgba(117,62,30,.25); }
