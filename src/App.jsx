@@ -368,17 +368,17 @@ export default function App() {
             </Card>
 
             <aside className="grid content-start gap-4 xl:col-start-1 xl:row-start-1">
-              <Card id="wallet" className="wallet-surface relative isolate scroll-mt-6 overflow-hidden border-0 text-white shadow-peach">
-                <WalletCoinScatter />
-                <CardContent className="relative z-10 p-5"><div className="flex items-center justify-between"><p className="text-xs text-white/75">轻盈钱包</p><span className="wallet-icon-motion" aria-hidden="true"><WalletCards className="h-5 w-5 text-white/80" /></span></div><AnimatedWalletBalance value={stats.wallet} /><p className="mt-2 text-[10px] text-white/70">较起始体重每减 0.2 斤，累计奖励 20 元</p></CardContent>
-              </Card>
-
               <Card className="border-stone-200/80 bg-white/80 shadow-soft">
                 <CardContent className="p-5">
                   <div className="flex items-center justify-between"><div><p className="text-xs text-muted-foreground">今天记一下</p><p className="mt-1 text-sm font-semibold">只使用 AI 识别，保证数据一致</p></div><Scale className="h-5 w-5 text-primary" /></div>
                   <Button variant="secondary" className="mt-4 h-20 w-full justify-center" onClick={openRecord}><Camera className="h-5 w-5" />上传截图开始识别<UploadCloud className="ml-auto h-4 w-4" /></Button>
                   <p className="mt-3 flex items-center gap-1.5 text-[10px] text-muted-foreground"><ShieldCheck className="h-3 w-3 text-emerald-600" />截图将随记录安全保存在服务器中</p>
                 </CardContent>
+              </Card>
+
+              <Card id="wallet" className="wallet-surface relative isolate scroll-mt-6 overflow-hidden border-0 text-white shadow-peach">
+                <WalletCoinScatter />
+                <CardContent className="relative z-10 p-5"><div className="flex items-center justify-between"><p className="text-xs text-white/75">轻盈钱包</p><span className="wallet-icon-motion" aria-hidden="true"><WalletCards className="h-5 w-5 text-white/80" /></span></div><AnimatedWalletBalance value={stats.wallet} /><p className="mt-2 text-[10px] text-white/70">较起始体重每减 0.2 斤，累计奖励 20 元</p></CardContent>
               </Card>
 
               <Card className="border-stone-200/80 bg-white/60 shadow-none">
