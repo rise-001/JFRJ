@@ -136,7 +136,7 @@ class WeightStore {
     const start = Number(startWeight);
     const goal = Number(goalWeight);
     if (![start, goal].every((value) => Number.isFinite(value) && value >= 30 && value <= 250)) {
-      throw Object.assign(new Error("请输入 30 至 250 kg 之间的有效体重"), { code: "INVALID_PROFILE" });
+      throw Object.assign(new Error("请输入 60 至 500 斤之间的有效体重"), { code: "INVALID_PROFILE" });
     }
     if (goal >= start) {
       throw Object.assign(new Error("目标体重需要低于起始体重"), { code: "INVALID_PROFILE" });

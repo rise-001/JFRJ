@@ -23,6 +23,7 @@ import {
 import { LoginScreen } from "@/components/LoginScreen";
 import { WeightChart } from "@/components/WeightChart";
 import { apiRequest, readFileAsDataUrl } from "@/lib/api";
+import { formatWeightJin, jinToKg, kgToJin } from "@/lib/weight";
 import {
   chartEntries,
   createInitialDashboard,
@@ -48,7 +49,7 @@ function currentDateLabel() {
 
 function signedWeight(value) {
   if (Math.abs(value) < 0.05) return "持平";
-  return `${value > 0 ? "+" : ""}${value.toFixed(1)} kg`;
+  return `${value > 0 ? "+" : ""}${kgToJin(value).toFixed(1)} 斤`;
 }
 
 function Toast({ message }) {
@@ -195,25 +196,27 @@ export default function App() {
 
   function openGoalSettings() {
     setGoalDraft({
-      startWeight: dashboard.profile.startWeight.toFixed(1),
-      goalWeight: dashboard.profile.goalWeight.toFixed(1)
+      startWeight: kgToJin(dashboard.profile.startWeight).toFixed(1),
+      goalWeight: kgToJin(dashboard.profile.goalWeight).toFixed(1)
     });
     setGoalOpen(true);
   }
 
   async function saveGoal(event) {
     event.preventDefault();
-    const startWeight = Number(goalDraft.startWeight);
-    const goalWeight = Number(goalDraft.goalWeight);
-    if (![startWeight, goalWeight].every((value) => Number.isFinite(value) && value >= 30 && value <= 250)) {
-      notify("请输入 30 至 250 kg 之间的有效体重", 3800);
+    const startWeightJin = Number(goalDraft.startWeight);
+    const goalWeightJin = Number(goalDraft.goalWeight);
+    if (![startWeightJin, goalWeightJin].every((value) => Number.isFinite(value) && value >= 60 && value <= 500)) {
+      notify("请输入 60 至 500 斤之间的有效体重", 3800);
       return;
     }
-    if (goalWeight >= startWeight) {
+    if (goalWeightJin >= startWeightJin) {
       notify("目标体重需要低于起始体重", 3800);
       return;
     }
     try {
+      const startWeight = jinToKg(startWeightJin);
+      const goalWeight = jinToKg(goalWeightJin);
       setDashboard(await apiRequest("/api/dashboard/profile", { method: "PUT", body: JSON.stringify({ startWeight, goalWeight }) }));
       setGoalOpen(false);
       notify("体重目标已更新");
@@ -279,16 +282,16 @@ export default function App() {
           </section>
 
           <section className="grid grid-cols-2 divide-x divide-y overflow-hidden rounded-lg border bg-white/60 md:grid-cols-4 md:divide-y-0" aria-label="关键指标">
-            <Stat label="当前体重" value={stats.hasEntries ? `${stats.current.toFixed(1)} kg` : "--"} detail={stats.hasEntries ? (entries.length > 1 ? `较上次 ${signedWeight(stats.lastChange)}` : "首次 AI 识别记录") : "等待首次 AI 识别"} tone={stats.hasEntries && stats.lastChange <= 0 ? "good" : stats.hasEntries ? "warn" : "default"} />
-            <Stat label="累计变化" value={stats.hasEntries ? `${stats.totalLoss >= 0 ? "-" : "+"}${Math.abs(stats.totalLoss).toFixed(1)} kg` : "--"} detail={stats.hasEntries ? `起始 ${dashboard.profile.startWeight.toFixed(1)} kg` : "暂无可计算数据"} tone={stats.totalLoss > 0 ? "good" : "default"} />
-            <Stat label="距离目标" value={stats.hasEntries ? `${stats.remaining.toFixed(1)} kg` : "--"} detail={stats.hasEntries ? `目标 ${dashboard.profile.goalWeight.toFixed(1)} kg` : "首次识别后计算"} />
+            <Stat label="当前体重" value={stats.hasEntries ? formatWeightJin(stats.current) : "--"} detail={stats.hasEntries ? (entries.length > 1 ? `较上次 ${signedWeight(stats.lastChange)}` : "首次 AI 识别记录") : "等待首次 AI 识别"} tone={stats.hasEntries && stats.lastChange <= 0 ? "good" : stats.hasEntries ? "warn" : "default"} />
+            <Stat label="累计变化" value={stats.hasEntries ? `${stats.totalLoss >= 0 ? "-" : "+"}${kgToJin(Math.abs(stats.totalLoss)).toFixed(1)} 斤` : "--"} detail={stats.hasEntries ? `起始 ${formatWeightJin(dashboard.profile.startWeight)}` : "暂无可计算数据"} tone={stats.totalLoss > 0 ? "good" : "default"} />
+            <Stat label="距离目标" value={stats.hasEntries ? formatWeightJin(stats.remaining) : "--"} detail={stats.hasEntries ? `目标 ${formatWeightJin(dashboard.profile.goalWeight)}` : "首次识别后计算"} />
             <Stat label="连续记录" value={`${stats.streak} 天`} detail={stats.streak ? "保持稳定记录" : "今天可以重新开始"} />
           </section>
 
           <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(310px,.75fr)_minmax(0,1.55fr)]">
             <Card id="trend" className="scroll-mt-6 border-stone-200/80 bg-white/80 shadow-soft xl:col-start-2 xl:row-start-1">
               <CardHeader className="flex-row items-start justify-between space-y-0 pb-0">
-                <div><p className="text-xs font-medium text-muted-foreground">体重趋势</p><div className="mt-2 flex items-baseline gap-2"><strong className="text-4xl leading-none">{stats.hasEntries ? stats.current.toFixed(1) : "--"}</strong>{stats.hasEntries && <span className="text-sm text-muted-foreground">kg</span>}</div><p className={`mt-2 text-xs ${stats.hasEntries && stats.monthChange <= 0 ? "text-emerald-700" : "text-muted-foreground"}`}>{stats.hasEntries ? `近 30 天 ${signedWeight(stats.monthChange)}` : "等待首次 AI 识别"}</p></div>
+                <div><p className="text-xs font-medium text-muted-foreground">体重趋势</p><div className="mt-2 flex items-baseline gap-2"><strong className="text-4xl leading-none">{stats.hasEntries ? kgToJin(stats.current).toFixed(1) : "--"}</strong>{stats.hasEntries && <span className="text-sm text-muted-foreground">斤</span>}</div><p className={`mt-2 text-xs ${stats.hasEntries && stats.monthChange <= 0 ? "text-emerald-700" : "text-muted-foreground"}`}>{stats.hasEntries ? `近 30 天 ${signedWeight(stats.monthChange)}` : "等待首次 AI 识别"}</p></div>
                 <Tabs value={range} onValueChange={setRange}><TabsList><TabsTrigger value="recent">近 7 次</TabsTrigger><TabsTrigger value="month">30 天</TabsTrigger></TabsList></Tabs>
               </CardHeader>
               <CardContent className="pt-2"><WeightChart entries={trendEntries} goalWeight={dashboard.profile.goalWeight} /></CardContent>
@@ -296,7 +299,7 @@ export default function App() {
 
             <aside className="grid content-start gap-4 xl:col-start-1 xl:row-start-1">
               <Card id="wallet" className="wallet-surface scroll-mt-6 overflow-hidden border-0 text-white shadow-peach">
-                <CardContent className="p-5"><div className="flex items-center justify-between"><p className="text-xs text-white/75">轻盈钱包</p><WalletCards className="h-5 w-5 text-white/80" /></div><strong className="mt-3 block text-3xl">¥{stats.wallet.toLocaleString("zh-CN")}</strong><p className="mt-2 text-[10px] text-white/70">每减 0.1 kg，奖励 20 元虚拟币</p></CardContent>
+                <CardContent className="p-5"><div className="flex items-center justify-between"><p className="text-xs text-white/75">轻盈钱包</p><WalletCards className="h-5 w-5 text-white/80" /></div><strong className="mt-3 block text-3xl">¥{stats.wallet.toLocaleString("zh-CN")}</strong><p className="mt-2 text-[10px] text-white/70">每减 0.2 斤，奖励 20 元虚拟币</p></CardContent>
               </Card>
 
               <Card className="border-stone-200/80 bg-white/80 shadow-soft">
@@ -311,7 +314,7 @@ export default function App() {
                 <CardContent className="p-5">
                   <div className="flex items-center justify-between"><div><p className="text-xs text-muted-foreground">目标进度</p><p className="mt-1 text-sm font-semibold">已完成 {Math.round(stats.progress)}%</p></div><Button variant="ghost" size="icon" onClick={openGoalSettings} aria-label="修改目标" title="修改目标"><Pencil className="h-4 w-4" /></Button></div>
                   <Progress value={stats.progress} className="mt-4 h-2 bg-emerald-100 [&>div]:bg-emerald-600" />
-                  <div className="mt-3 flex justify-between text-[10px] text-muted-foreground"><span>{dashboard.profile.startWeight.toFixed(1)} kg</span><span>{dashboard.profile.goalWeight.toFixed(1)} kg</span></div>
+                  <div className="mt-3 flex justify-between text-[10px] text-muted-foreground"><span>{formatWeightJin(dashboard.profile.startWeight)}</span><span>{formatWeightJin(dashboard.profile.goalWeight)}</span></div>
                 </CardContent>
               </Card>
             </aside>
@@ -327,7 +330,7 @@ export default function App() {
                 return (
                   <div key={entry.id} className="grid grid-cols-[1fr_auto_32px] items-center gap-3 border-b px-4 py-3 last:border-0 md:grid-cols-[1.2fr_.8fr_.8fr_.8fr_.8fr_40px] md:px-5">
                     <div><strong className="text-sm md:font-medium">{formatEntryDate(entry.date, true)}</strong><p className="mt-0.5 text-[10px] text-muted-foreground md:hidden">AI 识图</p></div>
-                    <strong className="text-right text-sm md:text-left">{entry.weight.toFixed(1)} kg</strong>
+                    <strong className="text-right text-sm md:text-left">{formatWeightJin(entry.weight)}</strong>
                     <span className={`hidden text-xs md:block ${change < 0 ? "text-emerald-700" : change > 0 ? "text-amber-700" : "text-muted-foreground"}`}>{nextOlder ? signedWeight(change) : "起始记录"}</span>
                     <span className="hidden items-center gap-1.5 text-xs text-muted-foreground md:flex"><Sparkles className="h-3.5 w-3.5 text-primary" />AI {entry.confidence || "--"}%</span>
                     <span className="hidden text-xs md:block">{entry.reward ? <span className="text-emerald-700">+¥{entry.reward}</span> : "--"}</span>
@@ -356,7 +359,7 @@ export default function App() {
           <DialogHeader><DialogTitle>{recognized ? "确认 AI 识别结果" : "AI 识别体重"}</DialogTitle><DialogDescription>{recognized ? "数值已通过可信度校验，确认后将按今天的日期保存。" : "上传体重秤或智能秤 App 截图，系统只接受高可信度结果。"}</DialogDescription></DialogHeader>
           {recognized ? (
             <div className="space-y-5">
-              <div className="flex items-center gap-4 rounded-lg border border-emerald-200 bg-emerald-50 p-4"><img className="h-20 w-20 rounded-md object-cover" src={preview} alt="本次识别的体重截图" /><div><p className="text-xs text-emerald-700">识别到的体重</p><strong className="mt-1 block text-4xl text-emerald-800">{recognized.weight.toFixed(1)} <span className="text-sm font-normal">kg</span></strong></div></div>
+              <div className="flex items-center gap-4 rounded-lg border border-emerald-200 bg-emerald-50 p-4"><img className="h-20 w-20 rounded-md object-cover" src={preview} alt="本次识别的体重截图" /><div><p className="text-xs text-emerald-700">识别到的体重</p><strong className="mt-1 block text-4xl text-emerald-800">{kgToJin(recognized.weight).toFixed(1)} <span className="text-sm font-normal">斤</span></strong></div></div>
               <div className="flex items-center justify-between rounded-md bg-stone-100 px-3 py-2.5 text-xs"><span>AI 识别可信度</span><strong className="text-emerald-700">{recognized.confidence}% · 已达到 85% 保存标准</strong></div>
               <p className="text-center text-[11px] text-muted-foreground">为保证数据可靠性，体重数值不可手动修改；如结果不符合截图，请重新上传。</p>
               <div className="grid grid-cols-2 gap-2"><Button variant="outline" size="lg" onClick={() => { setRecognized(null); fileInputRef.current?.click(); }}><ImageUp className="h-4 w-4" />重新上传</Button><Button size="lg" onClick={saveRecord}><Check className="h-4 w-4" />确认保存</Button></div>
@@ -378,16 +381,16 @@ export default function App() {
       </Dialog>
 
       <Dialog open={goalOpen} onOpenChange={setGoalOpen}>
-        <DialogContent className="sm:max-w-[420px]"><DialogHeader><div className="mb-2 grid h-10 w-10 place-items-center rounded-lg bg-secondary text-emerald-700"><Target className="h-5 w-5" /></div><DialogTitle>设置体重目标</DialogTitle><DialogDescription>起始体重用于计算累计变化，目标体重用于计算进度。</DialogDescription></DialogHeader><form className="space-y-4" onSubmit={saveGoal}><div className="grid grid-cols-2 gap-3"><div className="space-y-2"><Label htmlFor="start-weight">起始体重</Label><Input id="start-weight" type="number" min="30" max="250" step="0.1" value={goalDraft.startWeight} onChange={(event) => setGoalDraft((value) => ({ ...value, startWeight: event.target.value }))} required /></div><div className="space-y-2"><Label htmlFor="goal-weight">目标体重</Label><Input id="goal-weight" type="number" min="30" max="250" step="0.1" value={goalDraft.goalWeight} onChange={(event) => setGoalDraft((value) => ({ ...value, goalWeight: event.target.value }))} required /></div></div><Button className="w-full" size="lg">保存目标</Button></form></DialogContent>
+        <DialogContent className="sm:max-w-[420px]"><DialogHeader><div className="mb-2 grid h-10 w-10 place-items-center rounded-lg bg-secondary text-emerald-700"><Target className="h-5 w-5" /></div><DialogTitle>设置体重目标</DialogTitle><DialogDescription>起始体重用于计算累计变化，目标体重用于计算进度。</DialogDescription></DialogHeader><form className="space-y-4" onSubmit={saveGoal}><div className="grid grid-cols-2 gap-3"><div className="space-y-2"><Label htmlFor="start-weight">起始体重（斤）</Label><Input id="start-weight" type="number" min="60" max="500" step="0.1" value={goalDraft.startWeight} onChange={(event) => setGoalDraft((value) => ({ ...value, startWeight: event.target.value }))} required /></div><div className="space-y-2"><Label htmlFor="goal-weight">目标体重（斤）</Label><Input id="goal-weight" type="number" min="60" max="500" step="0.1" value={goalDraft.goalWeight} onChange={(event) => setGoalDraft((value) => ({ ...value, goalWeight: event.target.value }))} required /></div></div><Button className="w-full" size="lg">保存目标</Button></form></DialogContent>
       </Dialog>
 
       <Dialog open={Boolean(deleteCandidate)} onOpenChange={(open) => !open && setDeleteCandidate(null)}>
-        <DialogContent className="sm:max-w-[390px]"><DialogHeader><DialogTitle>删除这条记录？</DialogTitle><DialogDescription>{deleteCandidate ? `${formatEntryDate(deleteCandidate.date, true)} · ${deleteCandidate.weight.toFixed(1)} kg` : ""}。删除后趋势、进度和该条记录的奖励会同步更新。</DialogDescription></DialogHeader><DialogFooter><Button variant="outline" onClick={() => setDeleteCandidate(null)}>取消</Button><Button variant="destructive" onClick={deleteEntry}><Trash2 className="h-4 w-4" />删除记录</Button></DialogFooter></DialogContent>
+        <DialogContent className="sm:max-w-[390px]"><DialogHeader><DialogTitle>删除这条记录？</DialogTitle><DialogDescription>{deleteCandidate ? `${formatEntryDate(deleteCandidate.date, true)} · ${formatWeightJin(deleteCandidate.weight)}` : ""}。删除后趋势、进度和该条记录的奖励会同步更新。</DialogDescription></DialogHeader><DialogFooter><Button variant="outline" onClick={() => setDeleteCandidate(null)}>取消</Button><Button variant="destructive" onClick={deleteEntry}><Trash2 className="h-4 w-4" />删除记录</Button></DialogFooter></DialogContent>
       </Dialog>
 
       <Dialog open={rewardOpen} onOpenChange={setRewardOpen}>
         {rewardOpen && <CoinRain />}
-        <DialogContent className="z-[70] max-w-sm text-center"><div className="mx-auto grid h-16 w-16 place-items-center rounded-full border-[6px] border-[#ffd570] bg-[#f5b64f] font-serif text-3xl font-bold text-white shadow-peach">¥</div><DialogHeader className="items-center"><DialogDescription>轻盈奖励到账</DialogDescription><DialogTitle className="text-3xl text-primary">+¥{reward.amount}</DialogTitle><DialogDescription>比上次轻了 {reward.loss.toFixed(1)} kg</DialogDescription></DialogHeader><Button size="lg" className="bg-stone-900 hover:bg-stone-800" onClick={() => setRewardOpen(false)}>收下奖励</Button></DialogContent>
+        <DialogContent className="z-[70] max-w-sm text-center"><div className="mx-auto grid h-16 w-16 place-items-center rounded-full border-[6px] border-[#ffd570] bg-[#f5b64f] font-serif text-3xl font-bold text-white shadow-peach">¥</div><DialogHeader className="items-center"><DialogDescription>轻盈奖励到账</DialogDescription><DialogTitle className="text-3xl text-primary">+¥{reward.amount}</DialogTitle><DialogDescription>比上次轻了 {kgToJin(reward.loss).toFixed(1)} 斤</DialogDescription></DialogHeader><Button size="lg" className="bg-stone-900 hover:bg-stone-800" onClick={() => setRewardOpen(false)}>收下奖励</Button></DialogContent>
       </Dialog>
 
       <Toast message={toast} />

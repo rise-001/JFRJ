@@ -170,7 +170,7 @@ function parseModelContent(content) {
   if (unit === "斤" || unit === "jin") weight /= 2;
   if (unit === "lb" || unit === "lbs" || unit === "磅") weight /= 2.2046226218;
   if (!Number.isFinite(weight) || weight < 30 || weight > 250) {
-    throw new Error("未识别到 30 至 250 kg 之间的有效体重");
+    throw new Error("未识别到 60 至 500 斤之间的有效体重");
   }
 
   let confidence = Number(payload.confidence ?? 0.9);
