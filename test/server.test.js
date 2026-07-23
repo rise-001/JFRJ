@@ -124,6 +124,12 @@ test("识别接口转发图片并规范化模型结果", async (t) => {
   const saved = await confirm.json();
   assert.equal(saved.dashboard.entries.length, 1);
   assert.equal(saved.dashboard.entries[0].weight, 65.4);
+  assert.match(saved.dashboard.entries[0].imageUrl, new RegExp(`/api/weight-records/${saved.entry.id}/image$`));
+
+  const imageResponse = await fetch(`${baseUrl}${saved.entry.imageUrl}`, { headers: { Cookie: cookie } });
+  assert.equal(imageResponse.status, 200);
+  assert.equal(imageResponse.headers.get("content-type"), "image/png");
+  assert.deepEqual(Buffer.from(await imageResponse.arrayBuffer()), Buffer.from("iVBORw0KGgo=", "base64"));
 
   const duplicateConfirm = await fetch(`${baseUrl}/api/weight-records/confirm`, {
     method: "POST",
@@ -132,6 +138,10 @@ test("识别接口转发图片并规范化模型结果", async (t) => {
   });
   assert.equal(duplicateConfirm.status, 400);
   assert.equal((await duplicateConfirm.json()).code, "RECOGNITION_EXPIRED");
+
+  const remove = await fetch(`${baseUrl}/api/weight-records/${saved.entry.id}`, { method: "DELETE", headers: { Cookie: cookie } });
+  assert.equal(remove.status, 200);
+  assert.equal(fs.readdirSync(path.join(config.dataDir, "weight-images")).length, 0);
 });
 
 test("上游不支持 JSON 输出模式时自动重试识图请求", async (t) => {

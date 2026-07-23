@@ -6,6 +6,7 @@ import {
   Check,
   ChevronDown,
   ClipboardList,
+  Image as ImageIcon,
   ImageUp,
   LayoutDashboard,
   LoaderCircle,
@@ -127,6 +128,18 @@ function Stat({ label, value, detail, tone = "default" }) {
   );
 }
 
+function RecordPhotoThumbnail({ entry, onOpen }) {
+  const [failed, setFailed] = useState(false);
+  if (!entry.imageUrl || failed) {
+    return <span className="grid h-10 w-10 place-items-center rounded-md border bg-stone-50 text-stone-400" title="无保存照片"><ImageIcon className="h-4 w-4" /></span>;
+  }
+  return (
+    <button className="h-10 w-10 overflow-hidden rounded-md border bg-stone-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" type="button" onClick={() => onOpen(entry)} aria-label={`查看 ${entry.date} 上传的照片`} title="查看上传照片">
+      <img className="h-full w-full object-cover transition-transform hover:scale-105" src={entry.imageUrl} alt="" loading="lazy" onError={() => setFailed(true)} />
+    </button>
+  );
+}
+
 export default function App() {
   const [dashboard, setDashboard] = useState(createInitialDashboard);
   const [authStatus, setAuthStatus] = useState({ loading: true, authenticated: false, setupRequired: false });
@@ -139,6 +152,7 @@ export default function App() {
   const [goalOpen, setGoalOpen] = useState(false);
   const [goalDraft, setGoalDraft] = useState({ startWeight: "", goalWeight: "" });
   const [deleteCandidate, setDeleteCandidate] = useState(null);
+  const [photoCandidate, setPhotoCandidate] = useState(null);
   const [rewardOpen, setRewardOpen] = useState(false);
   const [reward, setReward] = useState({ amount: 0, loss: 0 });
   const [preview, setPreview] = useState("");
@@ -363,7 +377,7 @@ export default function App() {
                 <CardContent className="p-5">
                   <div className="flex items-center justify-between"><div><p className="text-xs text-muted-foreground">今天记一下</p><p className="mt-1 text-sm font-semibold">只使用 AI 识别，保证数据一致</p></div><Scale className="h-5 w-5 text-primary" /></div>
                   <Button variant="secondary" className="mt-4 h-20 w-full justify-center" onClick={openRecord}><Camera className="h-5 w-5" />上传截图开始识别<UploadCloud className="ml-auto h-4 w-4" /></Button>
-                  <p className="mt-3 flex items-center gap-1.5 text-[10px] text-muted-foreground"><ShieldCheck className="h-3 w-3 text-emerald-600" />截图只用于本次识别，不会保存在浏览器</p>
+                  <p className="mt-3 flex items-center gap-1.5 text-[10px] text-muted-foreground"><ShieldCheck className="h-3 w-3 text-emerald-600" />截图将随记录安全保存在服务器中</p>
                 </CardContent>
               </Card>
 
@@ -380,13 +394,14 @@ export default function App() {
           <section id="history" className="scroll-mt-6 pt-8">
             <div className="flex items-end justify-between"><div><p className="text-xs text-muted-foreground">历史记录</p><h2 className="mt-1 text-lg font-semibold">最近的体重变化</h2></div><Badge variant="outline" className="bg-white/60">共 {entries.length} 条</Badge></div>
             <div className="mt-4 overflow-hidden rounded-lg border bg-white/70">
-              <div className="hidden grid-cols-[1.2fr_.8fr_.8fr_.8fr_.8fr_40px] gap-3 border-b bg-stone-50/80 px-5 py-3 text-[10px] text-muted-foreground md:grid"><span>日期</span><span>体重</span><span>较上次</span><span>记录方式</span><span>奖励</span><span /></div>
+              <div className="hidden grid-cols-[1.1fr_52px_.75fr_.75fr_.8fr_.65fr_40px] gap-3 border-b bg-stone-50/80 px-5 py-3 text-[10px] text-muted-foreground md:grid"><span>日期</span><span>照片</span><span>体重</span><span>较上次</span><span>记录方式</span><span>奖励</span><span /></div>
               {visibleEntries.map((entry, index) => {
                 const nextOlder = entries[entries.findIndex((item) => item.id === entry.id) + 1];
                 const change = nextOlder ? entry.weight - nextOlder.weight : 0;
                 return (
-                  <div key={entry.id} className="grid grid-cols-[1fr_auto_32px] items-center gap-3 border-b px-4 py-3 last:border-0 md:grid-cols-[1.2fr_.8fr_.8fr_.8fr_.8fr_40px] md:px-5">
+                  <div key={entry.id} className="grid grid-cols-[1fr_40px_auto_32px] items-center gap-3 border-b px-4 py-3 last:border-0 md:grid-cols-[1.1fr_52px_.75fr_.75fr_.8fr_.65fr_40px] md:px-5">
                     <div><strong className="text-sm md:font-medium">{formatEntryDate(entry.date, true)}</strong><p className="mt-0.5 text-[10px] text-muted-foreground md:hidden">AI 识图</p></div>
+                    <RecordPhotoThumbnail entry={entry} onOpen={setPhotoCandidate} />
                     <strong className="text-right text-sm md:text-left">{formatWeightJin(entry.weight)}</strong>
                     <span className={`hidden text-xs md:block ${change < 0 ? "text-emerald-700" : change > 0 ? "text-amber-700" : "text-muted-foreground"}`}>{nextOlder ? signedWeight(change) : "起始记录"}</span>
                     <span className="hidden items-center gap-1.5 text-xs text-muted-foreground md:flex"><Sparkles className="h-3.5 w-3.5 text-primary" />AI {entry.confidence || "--"}%</span>
@@ -435,6 +450,13 @@ export default function App() {
 
       <Dialog open={loadingOpen} onOpenChange={() => {}}>
         <DialogContent hideClose className="max-w-sm text-center"><div className="scan-preview mx-auto"><img src={preview} alt="待识别的体重截图" /><span className="animate-scan" /></div><DialogHeader className="items-center"><LoaderCircle className="h-5 w-5 animate-spin text-primary" /><DialogTitle>正在读取体重</DialogTitle><DialogDescription>AI 正在定位数值并校验单位</DialogDescription></DialogHeader></DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(photoCandidate)} onOpenChange={(open) => !open && setPhotoCandidate(null)}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader><DialogTitle>记录照片</DialogTitle><DialogDescription>{photoCandidate ? `${formatEntryDate(photoCandidate.date, true)} · ${formatWeightJin(photoCandidate.weight)}` : ""}</DialogDescription></DialogHeader>
+          {photoCandidate?.imageUrl && <div className="grid max-h-[70vh] min-h-64 place-items-center overflow-hidden rounded-md bg-stone-100"><img className="max-h-[70vh] w-full object-contain" src={photoCandidate.imageUrl} alt={`${photoCandidate.date} 上传的体重截图`} /></div>}
+        </DialogContent>
       </Dialog>
 
       <Dialog open={goalOpen} onOpenChange={setGoalOpen}>

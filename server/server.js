@@ -113,13 +113,14 @@ function validateImage(dataUrl, maxImageBytes) {
     throw Object.assign(new Error("仅支持 PNG、JPEG 或 WebP 图片"), { code: "IMAGE_TYPE_UNSUPPORTED" });
   }
 
-  const imageBytes = Buffer.from(match[2], "base64").length;
-  if (imageBytes === 0) {
+  const buffer = Buffer.from(match[2], "base64");
+  if (buffer.length === 0) {
     throw Object.assign(new Error("图片内容为空"), { code: "IMAGE_EMPTY" });
   }
-  if (imageBytes > maxImageBytes) {
+  if (buffer.length > maxImageBytes) {
     throw Object.assign(new Error(`图片不能超过 ${Math.floor(maxImageBytes / 1024 / 1024)} MB`), { code: "IMAGE_TOO_LARGE" });
   }
+  return { contentType: match[1].toLowerCase().replace("image/jpg", "image/jpeg"), buffer };
 }
 
 function extractTextContent(content) {
@@ -267,9 +268,9 @@ async function handleRecognition(request, response, config, fetchImpl, weightSto
 
   try {
     const body = await readJsonBody(request, config.maxBodyBytes);
-    validateImage(body.image, config.maxImageBytes);
+    const validatedImage = validateImage(body.image, config.maxImageBytes);
     const result = await callVisionModel(body.image, config, fetchImpl);
-    const pending = weightStore.createPendingRecognition(result, config.model);
+    const pending = weightStore.createPendingRecognition(result, config.model, validatedImage);
     sendJson(response, 200, { ...result, model: config.model, recognitionId: pending.id, expiresAt: pending.expiresAt });
   } catch (error) {
     const statusCode = error.statusCode || (error.code === "BODY_TOO_LARGE" ? 413 : 400);
@@ -352,6 +353,18 @@ function createAppServer(options = {}) {
         if (request.method === "POST" && pathname === "/api/weight-records/confirm") {
           const body = await readJsonBody(request, 32 * 1024);
           sendJson(response, 200, weightStore.confirmRecognition(body.recognitionId));
+          return;
+        }
+        const imageMatch = pathname.match(/^\/api\/weight-records\/([^/]+)\/image$/);
+        if ((request.method === "GET" || request.method === "HEAD") && imageMatch) {
+          const image = weightStore.getEntryImage(decodeURIComponent(imageMatch[1]));
+          response.writeHead(200, {
+            "Content-Type": image.contentType,
+            "Content-Length": image.body.length,
+            "Cache-Control": "private, no-store"
+          });
+          if (request.method === "HEAD") response.end();
+          else response.end(image.body);
           return;
         }
         const entryMatch = pathname.match(/^\/api\/weight-records\/([^/]+)$/);
