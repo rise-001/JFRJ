@@ -36,8 +36,8 @@
 }
 
 .login-page {
-  background-color: #f1f4f2;
-  background-image: linear-gradient(rgba(50, 58, 54, .025) 1px, transparent 1px), linear-gradient(90deg, rgba(50, 58, 54, .025) 1px, transparent 1px);
+  background-color: #f8f1f0;
+  background-image: linear-gradient(rgba(128, 78, 73, .035) 1px, transparent 1px), linear-gradient(90deg, rgba(128, 78, 73, .035) 1px, transparent 1px);
   background-size: 36px 36px;
 }
 

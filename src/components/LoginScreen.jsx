@@ -38,32 +38,32 @@ export function LoginScreen({ setupRequired, onAuthenticated }) {
 
   return (
     <div className="login-page grid min-h-screen place-items-center px-4 py-5 sm:px-7 sm:py-8">
-      <main className="grid w-full max-w-[1040px] overflow-hidden rounded-lg border border-[#dce2df] bg-white shadow-[0_30px_90px_rgba(31,37,34,.12)] lg:min-h-[620px] lg:grid-cols-[.88fr_1.12fr]">
-        <aside className="relative hidden overflow-hidden bg-[#282d2b] p-10 text-white lg:flex lg:flex-col">
+      <main className="grid w-full max-w-[1040px] overflow-hidden rounded-lg border border-[#ead5d2] bg-white shadow-[0_30px_90px_rgba(111,61,56,.15)] lg:min-h-[620px] lg:grid-cols-[.88fr_1.12fr]">
+        <aside className="relative hidden overflow-hidden bg-[#efa39c] p-10 text-[#4b2926] lg:flex lg:flex-col">
           <div className="flex items-center gap-3">
-            <span className="grid h-10 w-10 place-items-center rounded-lg bg-[#d9665d] text-white shadow-[0_12px_28px_rgba(0,0,0,.2)]"><TrendingDown className="h-5 w-5" /></span>
-            <span><strong className="block text-base">轻盈</strong><small className="block text-[9px] text-white/60">AI WEIGHT JOURNAL</small></span>
+            <span className="grid h-10 w-10 place-items-center rounded-lg bg-[#b84f47] text-white shadow-[0_12px_28px_rgba(117,53,47,.24)]"><TrendingDown className="h-5 w-5" /></span>
+            <span><strong className="block text-base">轻盈</strong><small className="block text-[9px] text-[#6f3e39]/75">AI WEIGHT JOURNAL</small></span>
           </div>
 
           <div className="my-auto py-12">
-            <div className="flex h-40 items-center justify-center border-y border-white/10">
-              <div className="relative grid h-24 w-24 place-items-center rounded-full border border-white/25 bg-white/[.03] text-white">
+            <div className="flex h-40 items-center justify-center border-y border-[#77423d]/20">
+              <div className="relative grid h-24 w-24 place-items-center rounded-full border border-[#71413c]/35 bg-white/15 text-[#59312d]">
                 <ScanLine className="h-9 w-9" />
-                <span className="absolute -right-1 top-3 h-3 w-3 rounded-full border-2 border-[#282d2b] bg-[#e4776e]" />
+                <span className="absolute -right-1 top-3 h-3 w-3 rounded-full border-2 border-[#efa39c] bg-[#b84f47]" />
               </div>
             </div>
-            <p className="mt-9 text-[11px] font-semibold text-[#f0a59e]">可靠识别，认真记录</p>
+            <p className="mt-9 text-[11px] font-semibold text-[#8d332d]">可靠识别，认真记录</p>
             <h1 className="mt-3 max-w-xs text-[32px] font-semibold leading-[1.35]">让每一次变化<br />都有清晰依据</h1>
-            <p className="mt-4 max-w-xs text-xs leading-6 text-white/60">体重记录只接受通过可信度校验的 AI 识别结果。</p>
+            <p className="mt-4 max-w-xs text-xs leading-6 text-[#633a36]/75">体重记录只接受通过可信度校验的 AI 识别结果。</p>
           </div>
 
-          <div className="grid grid-cols-2 border-t border-white/10 pt-5 text-[10px] text-white/60">
-            <span className="flex items-center gap-2"><ShieldCheck className="h-4 w-4 text-[#8fc9ad]" />加密会话</span>
-            <span className="flex items-center justify-end gap-2"><Database className="h-4 w-4 text-[#8fc9ad]" />SQLite</span>
+          <div className="grid grid-cols-2 border-t border-[#77423d]/20 pt-5 text-[10px] text-[#633a36]/75">
+            <span className="flex items-center gap-2"><ShieldCheck className="h-4 w-4 text-[#39725f]" />加密会话</span>
+            <span className="flex items-center justify-end gap-2"><Database className="h-4 w-4 text-[#39725f]" />SQLite</span>
           </div>
         </aside>
 
-        <section className="flex min-h-[620px] items-center bg-[#fcfdfc] px-6 py-10 sm:px-12 lg:px-16">
+        <section className="flex min-h-[620px] items-center bg-[#fffafa] px-6 py-10 sm:px-12 lg:px-16">
           <div className="mx-auto w-full max-w-[380px]">
             <div className="mb-10 flex items-center justify-between lg:hidden">
               <div className="flex items-center gap-3"><span className="grid h-9 w-9 place-items-center rounded-lg bg-[#b84f47] text-white"><TrendingDown className="h-5 w-5" /></span><span><strong className="block text-sm">轻盈</strong><small className="block text-[9px] text-muted-foreground">AI 体重记录</small></span></div>
