@@ -1,15 +1,15 @@
 # 轻盈 - AI 减肥与记重助手
 
-响应式 AI 体重记录 Web 应用。用户必须先完成管理员登录，登录后通过 AI 识图新增每日体重记录，查看动态趋势、目标进度、历史明细和虚拟奖励。服务端调用支持视觉的大模型识别体重，系统只接受达到 85% 可信度门槛的结果，用户确认后按减重数额发放虚拟奖励。
+响应式 AI 体重记录 Web 应用。用户必须先完成管理员登录，登录后通过视觉大模型或 ddddocr 新增每日体重记录，查看动态趋势、目标进度、历史明细和虚拟奖励。系统只接受 60 至 500 斤范围内且达到 85% 可信度门槛的结果，用户确认后按减重数额发放虚拟奖励。
 
 工作台支持修改起始体重和目标体重、覆盖同一天的记录、删除误记录，以及在近 7 次和近 30 天两种趋势范围间切换。所有指标均由历史记录实时计算，不使用固定展示数值。
 
 ## 架构
 
 - 浏览器：React、Vite、Tailwind CSS、Shadcn UI、Radix UI、Lucide 和 Recharts。
-- 服务端：Node.js 22.5+、内置 SQLite，托管静态页面并代理大模型请求。
-- 大模型：兼容 OpenAI Chat Completions 的视觉接口，默认使用[凌云 API 识图接口](https://yunai.apifox.cn/api-487299942)。
-- 部署：单容器运行，管理员在系统界面配置 API Key，服务端加密持久化。
+- 服务端：Node.js 22.5+、内置 SQLite，托管静态页面并调度后台识别任务。
+- 识别引擎：兼容 OpenAI Chat Completions 的视觉接口，或内置的 ddddocr Python 服务。
+- 部署：单个 Docker 镜像同时运行 Node 主服务和内置 ddddocr；管理员可在系统设置中随时切换引擎。
 - 权限：工作台和识图接口均要求有效管理员会话，退出后立即返回登录页。
 
 ## 项目结构
@@ -26,6 +26,7 @@
 │   ├── server.js        # HTTP 服务、AI 代理和管理员接口
 │   ├── auth.js          # 管理员会话与登录限流
 │   └── system-store.js  # 密码哈希、配置加密与持久化
+├── ddddocr/             # 镜像内置的 ddddocr Python 服务
 ├── test/                # Node 自动化测试
 ├── components.json      # Shadcn UI 配置
 ├── vite.config.js
@@ -56,7 +57,7 @@ ghcr.io/rise-001/jfrj:latest
 
 ### 直接使用镜像（纯 Docker）
 
-服务器只需安装 Docker Engine，无需下载项目源码。镜像支持 `linux/amd64` 和 `linux/arm64`：
+服务器只需安装 Docker Engine，无需下载项目源码。镜像支持 `linux/amd64` 和 `linux/arm64`，单个容器已经包含视觉大模型代理和 ddddocr：
 
 ```text
 ghcr.io/rise-001/jfrj:latest
@@ -74,7 +75,7 @@ ghcr.io/rise-001/jfrj:latest
 
    ```bash
    docker pull ghcr.io/rise-001/jfrj:latest
-   docker run -d --name jfrj --restart unless-stopped -p 3001:3000 -e PORT=3000 -e DATA_DIR=/app/data -e APP_TIMEZONE=Asia/Shanghai -e COOKIE_SECURE=false -v /opt/JFRJ:/app/data --read-only --tmpfs /tmp:size=16m --security-opt no-new-privileges:true ghcr.io/rise-001/jfrj:latest
+   docker run -d --name jfrj --restart unless-stopped -p 3001:3000 -e PORT=3000 -e DATA_DIR=/app/data -e APP_TIMEZONE=Asia/Shanghai -e COOKIE_SECURE=false -v /opt/JFRJ:/app/data --read-only --tmpfs /tmp:size=64m --security-opt no-new-privileges:true ghcr.io/rise-001/jfrj:latest
    ```
 
    未设置 `ADMIN_PASSWORD` 时，首次打开页面会要求创建至少 8 位的管理员密码。初始化完成前，建议在云服务器安全组中仅允许自己的 IP 访问 TCP `3001`，避免其他人抢先创建管理员。
@@ -94,7 +95,7 @@ ghcr.io/rise-001/jfrj:latest
 ```bash
 docker pull ghcr.io/rise-001/jfrj:latest
 docker rm -f jfrj
-docker run -d --name jfrj --restart unless-stopped -p 3001:3000 -e PORT=3000 -e DATA_DIR=/app/data -e APP_TIMEZONE=Asia/Shanghai -e COOKIE_SECURE=false -v /opt/JFRJ:/app/data --read-only --tmpfs /tmp:size=16m --security-opt no-new-privileges:true ghcr.io/rise-001/jfrj:latest
+docker run -d --name jfrj --restart unless-stopped -p 3001:3000 -e PORT=3000 -e DATA_DIR=/app/data -e APP_TIMEZONE=Asia/Shanghai -e COOKIE_SECURE=false -v /opt/JFRJ:/app/data --read-only --tmpfs /tmp:size=64m --security-opt no-new-privileges:true ghcr.io/rise-001/jfrj:latest
 docker image prune -f
 ```
 
@@ -119,7 +120,7 @@ docker image prune -f
    cp .env.example .env
    ```
 
-3. 可按需编辑 `.env` 中的端口和会话配置。API Key 不需要写入文件；首次登录后可在系统设置中保存。
+3. 可按需编辑 `.env` 中的端口和会话配置。视觉大模型的 API Key 不需要写入文件；首次登录后可在系统设置中保存。ddddocr 不需要 API Key。
 
 4. 拉取 GitHub 已构建的镜像并启动：
 
@@ -144,8 +145,9 @@ docker image prune -f
 6. 在云服务器安全组或防火墙中放行 TCP `3000` 端口，然后打开 `http://服务器IP:3000`：
 
    - 首次使用时创建至少 8 位的管理员密码。
-   - 登录后填写 API 地址、视觉模型和 API Key。
-   - 保存后即可直接上传截图识别体重。
+   - 登录后在“识别设置”中选择“视觉大模型”或“ddddocr”。
+   - 视觉大模型需要填写 API 地址、模型和 API Key。
+   - ddddocr 使用镜像内置地址 `http://127.0.0.1:8000/recognize`，无需 API Key，也无需部署第二个容器。
 
    查看实时日志：
 
@@ -179,6 +181,8 @@ docker run --rm -v qingying-data:/data -v "$PWD":/backup alpine \
 | `AI_API_URL` | `https://yunllm.com/v1/chat/completions` | Chat Completions 完整地址 |
 | `AI_API_KEY` | 空 | 可选的环境变量备用 Key；推荐在系统界面配置 |
 | `AI_MODEL` | `gpt-4o` | 支持图片输入的模型名称 |
+| `RECOGNITION_ENGINE` | `vision` | 默认识别引擎，可设为 `vision` 或 `ddddocr` |
+| `DDDDOCR_API_URL` | `http://127.0.0.1:8000/recognize` | 镜像内置 ddddocr 服务地址，通常无需修改 |
 | `AI_TIMEOUT_MS` | `45000` | 上游调用超时，单位毫秒 |
 | `AI_JSON_MODE` | `true` | 是否发送 `response_format: json_object`；模型不支持时设为 `false` |
 | `MAX_IMAGE_BYTES` | `8388608` | 图片最大字节数，默认 8 MB |
@@ -188,7 +192,7 @@ docker run --rm -v qingying-data:/data -v "$PWD":/backup alpine \
 | `CONFIG_SECRET` | 空 | 可选的固定加密密钥；留空时在数据卷自动生成 |
 | `DATA_DIR` | `项目/data` | 加密配置存储目录，容器内为 `/app/data` |
 
-可以在系统设置中替换为其他 OpenAI 兼容视觉模型。API Key 不会返回给浏览器，只显示末四位掩码；服务端使用 AES-256-GCM 加密保存，管理员密码使用 scrypt 哈希保存。请同时备份完整的 `qingying-data` 卷，因为自动生成的加密密钥也位于其中。
+可以在系统设置中切换 ddddocr，或替换为其他 OpenAI 兼容视觉模型。API Key 不会返回给浏览器，只显示末四位掩码；服务端使用 AES-256-GCM 加密保存，管理员密码使用 scrypt 哈希保存。请同时备份完整的 `qingying-data` 卷，因为自动生成的加密密钥也位于其中。
 
 ## 本地运行与测试
 
@@ -210,6 +214,8 @@ npm run dev
 
 访问 `http://127.0.0.1:5173`。Vite 会自动代理 `/api` 到后端。
 
+直接运行 Node 源码时不会自动安装 Python 依赖；本地调试 ddddocr 可单独安装 `ddddocr/requirements.txt` 并运行 `python ddddocr/server.py`。Docker 镜像部署不需要这些额外步骤。
+
 生产模式：
 
 ```bash
@@ -223,13 +229,16 @@ npm start
 npm test
 ```
 
-从右上角系统设置完成首次初始化并填写 Key。本地加密配置保存在 `data/`，该目录已加入 `.gitignore`。
+从右上角系统设置完成首次初始化并选择识别引擎。视觉大模型需要填写 Key；ddddocr 已内置，使用默认地址即可。本地配置保存在 `data/`，该目录已加入 `.gitignore`。
 
 ## 接口
 
 - `GET /health`：容器健康状态，不返回密钥。
 - `GET /api/config`：前端可见的模型配置状态，不返回密钥。
-- `POST /api/recognize-weight`：接收 `{ "image": "data:image/png;base64,..." }`，返回 AI 识别结果和一次性 `recognitionId`，可信度低于 85% 的结果会被拒绝。
+- `POST /api/recognize-weight`：接收 `{ "image": "data:image/png;base64,...", "jobId": "可选 UUID" }`，图片落盘后立即返回 `202` 和后台任务 ID。
+- `GET /api/recognition-jobs/active`：读取最近一个仍在处理或等待确认的识别任务，用于刷新页面后恢复进度。
+- `GET /api/recognition-jobs/:id`：查询后台识别状态；成功后返回一次性 `recognitionId`，可信度低于 85% 的任务会进入失败状态。
+- `GET /api/recognition-jobs/:id/image`：读取后台任务对应的原图，需要登录。
 - `GET /api/dashboard`：读取 SQLite 中的目标、AI 记录和钱包，需要登录。
 - `POST /api/weight-records/confirm`：使用一次性 `recognitionId` 确认写入 SQLite，需要登录；不接受体重数值。
 - `DELETE /api/weight-records/:id`：删除一条 AI 记录，需要登录。
@@ -240,4 +249,4 @@ npm test
 - `GET/PUT /api/admin/settings`：读取掩码配置或保存模型配置，需要登录。
 - `PUT /api/admin/password`：修改管理员密码，需要登录。
 
-体重目标、AI 识别产生的记录和奖励账本保存在 `DATA_DIR/qingying.sqlite` SQLite 数据库中，上传的原图保存在 `DATA_DIR/weight-images`，浏览器不保存业务数据。管理员登录会话同样持久化在 `DATA_DIR`，仅在主动退出或修改密码时失效。新版不生成演示数据，也不会导入旧版固定趋势数据，首次使用时趋势和钱包均为空。数据库和照片均位于 Docker 数据卷内，备份该数据卷即可完整迁移记录。若要支持多用户，应为记录增加用户 ID 和权限隔离。
+体重目标、AI 识别任务、记录和奖励账本保存在 `DATA_DIR/qingying.sqlite` SQLite 数据库中，上传的原图保存在 `DATA_DIR/weight-images`，浏览器不保存业务数据。图片上传完成后由服务端后台识别，浏览器断网或刷新不会终止任务；服务重启后也会自动恢复未完成任务。待确认结果和临时任务保留 24 小时。管理员登录会话同样持久化在 `DATA_DIR`，仅在主动退出或修改密码时失效。新版不生成演示数据，也不会导入旧版固定趋势数据，首次使用时趋势和钱包均为空。数据库和照片均位于 Docker 数据卷内，备份该数据卷即可完整迁移记录。若要支持多用户，应为记录增加用户 ID 和权限隔离。

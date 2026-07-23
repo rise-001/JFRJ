@@ -109,6 +109,8 @@ class SystemSettingsStore {
 
   getAiConfig() {
     const ai = this.data.ai;
+    const defaultDdddOcrUrl = this.baseConfig.ddddocrUrl || "http://127.0.0.1:8000/recognize";
+    const storedDdddOcrUrl = ai.ddddocrUrl === "http://ddddocr:8000/recognize" ? defaultDdddOcrUrl : ai.ddddocrUrl;
     let storedKey = "";
     if (ai.apiKey) {
       try {
@@ -122,6 +124,8 @@ class SystemSettingsStore {
       apiUrl: ai.apiUrl || this.baseConfig.apiUrl,
       apiKey: storedKey || this.baseConfig.apiKey,
       model: ai.model || this.baseConfig.model,
+      recognitionEngine: ["vision", "ddddocr"].includes(ai.recognitionEngine) ? ai.recognitionEngine : this.baseConfig.recognitionEngine || "vision",
+      ddddocrUrl: storedDdddOcrUrl || defaultDdddOcrUrl,
       jsonMode: typeof ai.jsonMode === "boolean" ? ai.jsonMode : this.baseConfig.jsonMode
     };
   }
@@ -132,15 +136,20 @@ class SystemSettingsStore {
     return {
       apiUrl: config.apiUrl,
       model: config.model,
+      recognitionEngine: config.recognitionEngine,
+      ddddocrUrl: config.ddddocrUrl,
       jsonMode: config.jsonMode,
       apiKeyConfigured: Boolean(config.apiKey),
-      apiKeyMask: suffix ? `••••••••${suffix}` : ""
+      apiKeyMask: suffix ? `••••••••${suffix}` : "",
+      recognitionConfigured: config.recognitionEngine === "ddddocr" ? Boolean(config.ddddocrUrl) : Boolean(config.apiKey)
     };
   }
 
   updateAiSettings(input) {
     const apiUrl = String(input.apiUrl || "").trim();
     const model = String(input.model || "").trim();
+    const recognitionEngine = input.recognitionEngine === "ddddocr" ? "ddddocr" : "vision";
+    const ddddocrUrl = String(input.ddddocrUrl || "").trim();
     let parsedUrl;
     try {
       parsedUrl = new URL(apiUrl);
@@ -149,9 +158,20 @@ class SystemSettingsStore {
     }
     if (!["http:", "https:"].includes(parsedUrl.protocol)) throw new Error("API 地址仅支持 HTTP 或 HTTPS");
     if (!model || model.length > 120) throw new Error("请输入有效的模型名称");
+    if (recognitionEngine === "ddddocr" && !ddddocrUrl) throw new Error("请输入 ddddocr 服务地址");
+    if (ddddocrUrl) {
+      try {
+        parsedUrl = new URL(ddddocrUrl);
+      } catch {
+        throw new Error("ddddocr 服务地址格式不正确");
+      }
+      if (!["http:", "https:"].includes(parsedUrl.protocol)) throw new Error("ddddocr 服务地址仅支持 HTTP 或 HTTPS");
+    }
 
     this.data.ai.apiUrl = apiUrl;
     this.data.ai.model = model;
+    this.data.ai.recognitionEngine = recognitionEngine;
+    this.data.ai.ddddocrUrl = ddddocrUrl;
     this.data.ai.jsonMode = input.jsonMode !== false;
     if (input.clearApiKey === true) delete this.data.ai.apiKey;
     if (typeof input.apiKey === "string" && input.apiKey.trim()) {

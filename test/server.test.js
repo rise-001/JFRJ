@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { createAppServer, parseModelContent } = require("../server/server");
+const { createAppServer, parseDdddOcrContent, parseModelContent } = require("../server/server");
 const { SystemSettingsStore } = require("../server/system-store");
 const { WeightStore } = require("../server/weight-store");
 
@@ -14,6 +14,8 @@ function createTestConfig(t, overrides = {}) {
     apiUrl: "https://example.test/v1/chat/completions",
     apiKey: "",
     model: "vision-test",
+    recognitionEngine: "vision",
+    ddddocrUrl: "http://127.0.0.1:8000/recognize",
     timeoutMs: 1000,
     maxImageBytes: 1024,
     maxBodyBytes: 4096,
@@ -45,6 +47,18 @@ async function login(baseUrl, password = "secure-pass-123") {
   return response.headers.get("set-cookie").split(";")[0];
 }
 
+async function waitForRecognitionJob(baseUrl, cookie, jobId, expectedStatus = "succeeded") {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const response = await fetch(`${baseUrl}/api/recognition-jobs/${jobId}`, { headers: { Cookie: cookie } });
+    assert.equal(response.status, 200);
+    const job = await response.json();
+    if (job.status === expectedStatus) return job;
+    if (job.status === "failed") assert.fail(job.error?.message || "识别任务失败");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.fail(`识别任务未在预期时间内进入 ${expectedStatus} 状态`);
+}
+
 test("解析标准 JSON、代码块和斤单位", () => {
   assert.deepEqual(parseModelContent('{"weightKg":65.4,"confidence":0.98}'), {
     weight: 65.4,
@@ -74,6 +88,38 @@ test("解析标准 JSON、代码块和斤单位", () => {
   assert.throws(() => parseModelContent('{"weightKg":65.4,"confidence":0.84}'), /可信度不足/);
 });
 
+test("解析 ddddocr 文本中的体重与单位", () => {
+  assert.deepEqual(parseDdddOcrContent("当前体重 104.8斤 目标90斤"), {
+    weight: 52.4,
+    unit: "kg",
+    confidence: 90
+  });
+  assert.deepEqual(parseDdddOcrContent("weight: 52.4 kg"), {
+    weight: 52.4,
+    unit: "kg",
+    confidence: 90
+  });
+  assert.deepEqual(parseDdddOcrContent("16:33\n104.8\n90"), {
+    weight: 52.4,
+    unit: "kg",
+    confidence: 90
+  });
+  assert.throws(() => parseDdddOcrContent("时间 16:33 电量 42"), /未识别到/);
+});
+
+test("旧版 ddddocr 容器地址自动迁移到单容器地址", (t) => {
+  const { config, settingsStore } = createTestConfig(t);
+  t.after(() => fs.rmSync(config.dataDir, { recursive: true, force: true }));
+  settingsStore.updateAiSettings({
+    recognitionEngine: "ddddocr",
+    ddddocrUrl: "http://ddddocr:8000/recognize",
+    apiUrl: config.apiUrl,
+    model: config.model,
+    jsonMode: true
+  });
+  assert.equal(settingsStore.getAiConfig().ddddocrUrl, "http://127.0.0.1:8000/recognize");
+});
+
 test("每条记录按起始体重计算累计奖励并自动修正旧账本", (t) => {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "qingying-reward-test-"));
   t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
@@ -98,7 +144,7 @@ test("每条记录按起始体重计算累计奖励并自动修正旧账本", (t
   store.close();
 });
 
-test("识别接口转发图片并规范化模型结果", async (t) => {
+test("图片上传后由后台任务识别并可确认保存", async (t) => {
   let upstreamRequest;
   const { config, settingsStore } = createTestConfig(t, { apiKey: "test-key", adminPassword: "secure-pass-123" });
   const server = createAppServer({
@@ -123,8 +169,13 @@ test("识别接口转发图片并规范化模型结果", async (t) => {
     body: JSON.stringify({ image: "data:image/png;base64,iVBORw0KGgo=" })
   });
 
-  assert.equal(response.status, 200);
-  const recognition = await response.json();
+  assert.equal(response.status, 202);
+  const acceptedJob = await response.json();
+  assert.equal(acceptedJob.status, "queued");
+  assert.match(acceptedJob.jobId, /^[0-9a-f-]{36}$/);
+
+  const completedJob = await waitForRecognitionJob(baseUrl, cookie, acceptedJob.jobId);
+  const recognition = completedJob.result;
   assert.deepEqual({ weight: recognition.weight, unit: recognition.unit, confidence: recognition.confidence, model: recognition.model }, {
     weight: 65.4,
     unit: "kg",
@@ -132,11 +183,15 @@ test("识别接口转发图片并规范化模型结果", async (t) => {
     model: "vision-test"
   });
   assert.match(recognition.recognitionId, /^[0-9a-f-]{36}$/);
+  assert.equal(completedJob.imageUrl, `/api/recognition-jobs/${acceptedJob.jobId}/image`);
   assert.equal(upstreamRequest.url, "https://example.test/v1/chat/completions");
   assert.equal(upstreamRequest.init.headers.Authorization, "Bearer test-key");
   assert.match(upstreamRequest.body.messages[0].content, /显示单位为斤/);
   assert.equal(upstreamRequest.body.messages[1].content[0].text, "图片上的体重是多少，直接输出数据");
   assert.equal(upstreamRequest.body.messages[1].content[1].image_url.url, "data:image/png;base64,iVBORw0KGgo=");
+
+  const activeResponse = await fetch(`${baseUrl}/api/recognition-jobs/active`, { headers: { Cookie: cookie } });
+  assert.equal((await activeResponse.json()).job.jobId, acceptedJob.jobId);
 
   const dashboardBeforeConfirm = await fetch(`${baseUrl}/api/dashboard`, { headers: { Cookie: cookie } });
   assert.deepEqual((await dashboardBeforeConfirm.json()).entries, []);
@@ -167,9 +222,75 @@ test("识别接口转发图片并规范化模型结果", async (t) => {
   assert.equal(duplicateConfirm.status, 400);
   assert.equal((await duplicateConfirm.json()).code, "RECOGNITION_EXPIRED");
 
+  const confirmedJob = await fetch(`${baseUrl}/api/recognition-jobs/${acceptedJob.jobId}`, { headers: { Cookie: cookie } });
+  assert.equal((await confirmedJob.json()).status, "confirmed");
+
   const remove = await fetch(`${baseUrl}/api/weight-records/${saved.entry.id}`, { method: "DELETE", headers: { Cookie: cookie } });
   assert.equal(remove.status, 200);
   assert.equal(fs.readdirSync(path.join(config.dataDir, "weight-images")).length, 0);
+});
+
+test("上传响应不等待模型完成且活动任务可恢复", async (t) => {
+  let finishRecognition;
+  const { config, settingsStore } = createTestConfig(t, { apiKey: "test-key", adminPassword: "secure-pass-123" });
+  const server = createAppServer({
+    config,
+    settingsStore,
+    fetchImpl: () => new Promise((resolve) => {
+      finishRecognition = () => resolve(new Response(JSON.stringify({
+        choices: [{ message: { content: '{"weightKg":61.2,"confidence":0.96}' } }]
+      }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    })
+  });
+
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  cleanupServer(t, server, config.dataDir);
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const cookie = await login(baseUrl);
+  const response = await fetch(`${baseUrl}/api/recognize-weight`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Cookie: cookie },
+    body: JSON.stringify({ image: "data:image/png;base64,iVBORw0KGgo=" })
+  });
+
+  assert.equal(response.status, 202);
+  const acceptedJob = await response.json();
+  const runningJob = await waitForRecognitionJob(baseUrl, cookie, acceptedJob.jobId, "running");
+  assert.equal(runningJob.result, null);
+  assert.equal(typeof finishRecognition, "function");
+
+  const activeResponse = await fetch(`${baseUrl}/api/recognition-jobs/active`, { headers: { Cookie: cookie } });
+  assert.equal((await activeResponse.json()).job.jobId, acceptedJob.jobId);
+
+  finishRecognition();
+  const completedJob = await waitForRecognitionJob(baseUrl, cookie, acceptedJob.jobId);
+  assert.equal(completedJob.result.weight, 61.2);
+});
+
+test("服务重启后会恢复被中断的识别任务", async (t) => {
+  const { config, settingsStore } = createTestConfig(t, { apiKey: "test-key", adminPassword: "secure-pass-123" });
+  const interruptedStore = new WeightStore(config);
+  const queued = interruptedStore.createRecognitionJob({
+    contentType: "image/png",
+    buffer: Buffer.from("iVBORw0KGgo=", "base64")
+  }, config.model);
+  assert.ok(interruptedStore.claimRecognitionJob(queued.jobId));
+  interruptedStore.close();
+
+  const server = createAppServer({
+    config,
+    settingsStore,
+    fetchImpl: async () => new Response(JSON.stringify({
+      choices: [{ message: { content: '{"weightKg":63.1,"confidence":0.94}' } }]
+    }), { status: 200, headers: { "Content-Type": "application/json" } })
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  cleanupServer(t, server, config.dataDir);
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const cookie = await login(baseUrl);
+
+  const completedJob = await waitForRecognitionJob(baseUrl, cookie, queued.jobId);
+  assert.equal(completedJob.result.weight, 63.1);
 });
 
 test("上游不支持 JSON 输出模式时自动重试识图请求", async (t) => {
@@ -199,11 +320,65 @@ test("上游不支持 JSON 输出模式时自动重试识图请求", async (t) =
     body: JSON.stringify({ image: "data:image/png;base64,iVBORw0KGgo=" })
   });
 
-  assert.equal(response.status, 200);
-  assert.equal((await response.json()).weight, 60);
+  assert.equal(response.status, 202);
+  const acceptedJob = await response.json();
+  const completedJob = await waitForRecognitionJob(baseUrl, cookie, acceptedJob.jobId);
+  assert.equal(completedJob.result.weight, 60);
   assert.equal(requests.length, 2);
   assert.deepEqual(requests[0].body.response_format, { type: "json_object" });
   assert.equal(requests[1].body.response_format, undefined);
+});
+
+test("系统设置可切换到 ddddocr 并识别重量", async (t) => {
+  let ocrRequest;
+  const { config, settingsStore } = createTestConfig(t, { adminPassword: "secure-pass-123" });
+  const server = createAppServer({
+    config,
+    settingsStore,
+    fetchImpl: async (url, init) => {
+      ocrRequest = { url, body: JSON.parse(init.body) };
+      return new Response(JSON.stringify({ text: "当前体重 104.8斤" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  cleanupServer(t, server, config.dataDir);
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const cookie = await login(baseUrl);
+
+  const settingsResponse = await fetch(`${baseUrl}/api/admin/settings`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", Cookie: cookie },
+    body: JSON.stringify({
+      recognitionEngine: "ddddocr",
+      ddddocrUrl: "http://ddddocr.test/recognize",
+      apiUrl: config.apiUrl,
+      model: config.model,
+      jsonMode: true
+    })
+  });
+  assert.equal(settingsResponse.status, 200);
+  const publicSettings = await settingsResponse.json();
+  assert.equal(publicSettings.recognitionEngine, "ddddocr");
+  assert.equal(publicSettings.recognitionConfigured, true);
+  assert.equal(publicSettings.apiKeyConfigured, false);
+
+  const status = await fetch(`${baseUrl}/api/admin/status`, { headers: { Cookie: cookie } });
+  assert.equal((await status.json()).aiConfigured, true);
+  const upload = await fetch(`${baseUrl}/api/recognize-weight`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Cookie: cookie },
+    body: JSON.stringify({ image: "data:image/png;base64,iVBORw0KGgo=" })
+  });
+  assert.equal(upload.status, 202);
+  const acceptedJob = await upload.json();
+  const completedJob = await waitForRecognitionJob(baseUrl, cookie, acceptedJob.jobId);
+  assert.equal(completedJob.result.weight, 52.4);
+  assert.equal(completedJob.result.model, "ddddocr");
+  assert.equal(ocrRequest.url, "http://ddddocr.test/recognize");
+  assert.equal(ocrRequest.body.image, "data:image/png;base64,iVBORw0KGgo=");
 });
 
 test("未配置密钥时返回明确状态", async (t) => {

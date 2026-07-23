@@ -43,9 +43,19 @@ import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 const AdminSettingsDialog = lazy(() => import("@/components/AdminSettingsDialog").then((module) => ({ default: module.AdminSettingsDialog })));
+const RECOGNITION_POLL_MS = 1500;
 
 function currentDateLabel() {
   return new Intl.DateTimeFormat("zh-CN", { month: "long", day: "numeric", weekday: "long" }).format(new Date());
+}
+
+function createRecognitionJobId() {
+  if (window.crypto.randomUUID) return window.crypto.randomUUID();
+  const bytes = window.crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 function signedWeight(value) {
@@ -115,7 +125,7 @@ function AnimatedWalletBalance({ value }) {
     return () => window.cancelAnimationFrame(animationFrame);
   }, [value]);
 
-  return <strong className="wallet-balance mt-3 block text-3xl" aria-label={`钱包余额 ${value} 元`}><span aria-hidden="true">¥{displayValue.toLocaleString("zh-CN")}</span></strong>;
+  return <strong className="wallet-balance mt-2 block text-4xl sm:text-5xl" aria-label={`钱包余额 ${value} 元`}><span aria-hidden="true">¥{displayValue.toLocaleString("zh-CN")}</span></strong>;
 }
 
 function Stat({ label, value, detail, tone = "default" }) {
@@ -149,6 +159,7 @@ export default function App() {
   const [recordOpen, setRecordOpen] = useState(false);
   const [recognized, setRecognized] = useState(null);
   const [loadingOpen, setLoadingOpen] = useState(false);
+  const [activeRecognitionJobId, setActiveRecognitionJobId] = useState("");
   const [goalOpen, setGoalOpen] = useState(false);
   const [goalDraft, setGoalDraft] = useState({ startWeight: "", goalWeight: "" });
   const [deleteCandidate, setDeleteCandidate] = useState(null);
@@ -162,6 +173,8 @@ export default function App() {
   const [dataLoading, setDataLoading] = useState(true);
   const fileInputRef = useRef(null);
   const toastTimerRef = useRef(null);
+  const recognitionJobRef = useRef("");
+  const recognitionPollTimerRef = useRef(null);
 
   const stats = useMemo(() => getDashboardStats(dashboard), [dashboard]);
   const entries = useMemo(() => sortEntries(dashboard.entries), [dashboard.entries]);
@@ -172,7 +185,12 @@ export default function App() {
     apiRequest("/api/admin/status")
       .then(async (status) => {
         setAiConfigured(status.aiConfigured);
-        if (status.authenticated) setDashboard(await apiRequest("/api/dashboard"));
+        if (status.authenticated) {
+          setDashboard(await apiRequest("/api/dashboard"));
+          apiRequest("/api/recognition-jobs/active")
+            .then(({ job }) => job && monitorRecognitionJob(job, true))
+            .catch(() => {});
+        }
         setDataLoading(false);
         setAuthStatus({ loading: false, authenticated: status.authenticated, setupRequired: status.setupRequired });
       })
@@ -181,6 +199,7 @@ export default function App() {
         setAuthStatus({ loading: false, authenticated: false, setupRequired: false });
         setAiConfigured(false);
       });
+    return () => window.clearTimeout(recognitionPollTimerRef.current);
   }, []);
 
   function notify(message, duration = 2800) {
@@ -192,7 +211,12 @@ export default function App() {
   async function handleAuthenticated() {
     try {
       const status = await apiRequest("/api/admin/status");
-      if (status.authenticated) setDashboard(await apiRequest("/api/dashboard"));
+      if (status.authenticated) {
+        setDashboard(await apiRequest("/api/dashboard"));
+        apiRequest("/api/recognition-jobs/active")
+          .then(({ job }) => job && monitorRecognitionJob(job, true))
+          .catch(() => {});
+      }
       setDataLoading(false);
       setAuthStatus({ loading: false, authenticated: status.authenticated, setupRequired: status.setupRequired });
       setAiConfigured(status.aiConfigured);
@@ -202,7 +226,70 @@ export default function App() {
     }
   }
 
+  function stopRecognitionMonitor() {
+    window.clearTimeout(recognitionPollTimerRef.current);
+    recognitionPollTimerRef.current = null;
+    recognitionJobRef.current = "";
+    setActiveRecognitionJobId("");
+  }
+
+  function scheduleRecognitionPoll(jobId, delay = RECOGNITION_POLL_MS) {
+    window.clearTimeout(recognitionPollTimerRef.current);
+    recognitionPollTimerRef.current = window.setTimeout(() => pollRecognitionJob(jobId), delay);
+  }
+
+  function monitorRecognitionJob(job, openLoading) {
+    if (!job?.jobId) return;
+    recognitionJobRef.current = job.jobId;
+    setActiveRecognitionJobId(job.jobId);
+    if (job.imageUrl) setPreview(job.imageUrl);
+
+    if (job.status === "queued" || job.status === "running") {
+      if (openLoading) setLoadingOpen(true);
+      scheduleRecognitionPoll(job.jobId);
+      return;
+    }
+    if (job.status === "succeeded" && job.result) {
+      stopRecognitionMonitor();
+      setLoadingOpen(false);
+      setRecognized({
+        weight: Number(job.result.weight),
+        confidence: Math.round(job.result.confidence),
+        recognitionId: job.result.recognitionId
+      });
+      setRecordOpen(true);
+      return;
+    }
+    stopRecognitionMonitor();
+    setLoadingOpen(false);
+    if (job.status === "failed") {
+      if (job.error?.code === "AI_NOT_CONFIGURED") setAiConfigured(false);
+      notify(job.error?.message || "识别失败，请重新上传", 4200);
+    }
+  }
+
+  async function pollRecognitionJob(jobId) {
+    if (recognitionJobRef.current !== jobId) return;
+    try {
+      const job = await apiRequest(`/api/recognition-jobs/${encodeURIComponent(jobId)}`);
+      if (recognitionJobRef.current === jobId) monitorRecognitionJob(job, false);
+    } catch (error) {
+      if (recognitionJobRef.current !== jobId) return;
+      if (error.code === "RECOGNITION_JOB_NOT_FOUND") {
+        stopRecognitionMonitor();
+        setLoadingOpen(false);
+        notify("图片未能完整上传，请重新选择", 4200);
+        return;
+      }
+      scheduleRecognitionPoll(jobId, 3000);
+    }
+  }
+
   function openRecord() {
+    if (activeRecognitionJobId) {
+      setLoadingOpen(true);
+      return;
+    }
     setRecognized(null);
     setRecordOpen(true);
   }
@@ -224,22 +311,25 @@ export default function App() {
     }
     try {
       const image = await readFileAsDataUrl(file);
+      const jobId = createRecognitionJobId();
       setPreview(image);
       setRecordOpen(false);
       setLoadingOpen(true);
-      const [result] = await Promise.all([
-        apiRequest("/api/recognize-weight", { method: "POST", body: JSON.stringify({ image }) }),
-        new Promise((resolve) => window.setTimeout(resolve, 700))
-      ]);
-      const confidence = Math.round(result.confidence);
-      if (confidence < 85) throw Object.assign(new Error(`识别可信度仅 ${confidence}%，请上传更清晰的截图`), { code: "LOW_CONFIDENCE" });
-      setRecognized({ weight: Number(result.weight), confidence, recognitionId: result.recognitionId });
-      setLoadingOpen(false);
-      setRecordOpen(true);
+      recognitionJobRef.current = jobId;
+      setActiveRecognitionJobId(jobId);
+      const job = await apiRequest("/api/recognize-weight", { method: "POST", body: JSON.stringify({ image, jobId }) });
+      monitorRecognitionJob(job, false);
     } catch (error) {
-      setLoadingOpen(false);
-      if (error.code === "AI_NOT_CONFIGURED") setAiConfigured(false);
-      notify(error.code === "AI_NOT_CONFIGURED" ? "AI 服务尚未配置" : error.message || "识别失败，请重试", 4200);
+      const jobId = recognitionJobRef.current;
+      if (!error.status && jobId) {
+        notify("网络连接中断，正在从后台恢复识别任务", 4200);
+        scheduleRecognitionPoll(jobId, 1500);
+      } else {
+        stopRecognitionMonitor();
+        setLoadingOpen(false);
+        if (error.code === "AI_NOT_CONFIGURED") setAiConfigured(false);
+        notify(error.code === "AI_NOT_CONFIGURED" ? "AI 服务尚未配置" : error.message || "识别失败，请重试", 4200);
+      }
     } finally {
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
@@ -348,8 +438,16 @@ export default function App() {
 
           <section className="flex flex-col gap-4 pb-5 pt-7 sm:flex-row sm:items-end sm:justify-between lg:pt-9">
             <div><p className="text-xs text-muted-foreground">{entries[0]?.date === todayKey() ? "今日记录已完成" : "今天，从一次记录开始"}</p><h1 className="mt-1.5 text-2xl font-bold leading-tight sm:text-[28px]">体重管理工作台</h1></div>
-            <Button size="lg" className="w-full sm:w-auto" onClick={openRecord}><Camera className="h-4 w-4" />AI 识别并记录</Button>
+            <Button size="lg" className="w-full sm:w-auto" onClick={openRecord}>{activeRecognitionJobId ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Camera className="h-4 w-4" />}{activeRecognitionJobId ? "后台识别中" : "AI 识别并记录"}</Button>
           </section>
+
+          <Card id="wallet" className="wallet-surface relative isolate mb-5 scroll-mt-6 overflow-hidden border-0 text-white shadow-peach ring-1 ring-white/30">
+            <WalletCoinScatter />
+            <CardContent className="relative z-10 flex min-h-36 items-center justify-between gap-5 p-5 sm:min-h-40 sm:p-6">
+              <div className="min-w-0"><p className="text-sm font-semibold text-white">轻盈钱包</p><p className="mt-1 text-[11px] text-white/75">当前累计奖励</p><AnimatedWalletBalance value={stats.wallet} /><p className="mt-3 text-[11px] text-white/80">较起始体重每减 0.2 斤，累计奖励 20 元</p></div>
+              <span className="wallet-icon-motion grid h-14 w-14 shrink-0 place-items-center rounded-lg border border-white/25 bg-white/15 shadow-sm backdrop-blur-sm" aria-hidden="true"><WalletCards className="h-7 w-7 text-white" /></span>
+            </CardContent>
+          </Card>
 
           <section className="grid grid-cols-2 divide-x divide-y overflow-hidden rounded-lg border bg-white/60 md:grid-cols-4 md:divide-y-0" aria-label="关键指标">
             <Stat label="当前体重" value={stats.hasEntries ? formatWeightJin(stats.current) : "--"} detail={stats.hasEntries ? (entries.length > 1 ? `较上次 ${signedWeight(stats.lastChange)}` : "首次 AI 识别记录") : "等待首次 AI 识别"} tone={stats.hasEntries && stats.lastChange <= 0 ? "good" : stats.hasEntries ? "warn" : "default"} />
@@ -370,15 +468,10 @@ export default function App() {
             <aside className="grid content-start gap-4 xl:col-start-1 xl:row-start-1">
               <Card className="border-stone-200/80 bg-white/80 shadow-soft">
                 <CardContent className="p-5">
-                  <div className="flex items-center justify-between"><div><p className="text-xs text-muted-foreground">今天记一下</p><p className="mt-1 text-sm font-semibold">只使用 AI 识别，保证数据一致</p></div><Scale className="h-5 w-5 text-primary" /></div>
-                  <Button variant="secondary" className="mt-4 h-20 w-full justify-center" onClick={openRecord}><Camera className="h-5 w-5" />上传截图开始识别<UploadCloud className="ml-auto h-4 w-4" /></Button>
+                  <div className="flex items-center justify-between"><div><p className="text-xs text-muted-foreground">{activeRecognitionJobId ? "后台任务" : "今天记一下"}</p><p className="mt-1 text-sm font-semibold">{activeRecognitionJobId ? "AI 正在识别已上传的图片" : "只使用 AI 识别，保证数据一致"}</p></div><Scale className="h-5 w-5 text-primary" /></div>
+                  <Button variant="secondary" className="mt-4 h-20 w-full justify-center" onClick={openRecord}>{activeRecognitionJobId ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <Camera className="h-5 w-5" />}{activeRecognitionJobId ? "查看识别进度" : "上传截图开始识别"}{!activeRecognitionJobId && <UploadCloud className="ml-auto h-4 w-4" />}</Button>
                   <p className="mt-3 flex items-center gap-1.5 text-[10px] text-muted-foreground"><ShieldCheck className="h-3 w-3 text-emerald-600" />截图将随记录安全保存在服务器中</p>
                 </CardContent>
-              </Card>
-
-              <Card id="wallet" className="wallet-surface relative isolate scroll-mt-6 overflow-hidden border-0 text-white shadow-peach">
-                <WalletCoinScatter />
-                <CardContent className="relative z-10 p-5"><div className="flex items-center justify-between"><p className="text-xs text-white/75">轻盈钱包</p><span className="wallet-icon-motion" aria-hidden="true"><WalletCards className="h-5 w-5 text-white/80" /></span></div><AnimatedWalletBalance value={stats.wallet} /><p className="mt-2 text-[10px] text-white/70">较起始体重每减 0.2 斤，累计奖励 20 元</p></CardContent>
               </Card>
 
               <Card className="border-stone-200/80 bg-white/60 shadow-none">
@@ -420,7 +513,7 @@ export default function App() {
       <nav className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-4 border-t bg-white/95 px-2 pb-[max(.5rem,env(safe-area-inset-bottom))] pt-2 shadow-[0_-8px_30px_rgba(42,38,34,.08)] backdrop-blur-lg lg:hidden" aria-label="移动导航">
         <a className="mobile-nav active" href="#overview"><LayoutDashboard />概览</a>
         <a className="mobile-nav" href="#trend"><ChartNoAxesCombined />趋势</a>
-        <button className="mobile-nav" type="button" onClick={openRecord}><span className="grid h-8 w-8 place-items-center rounded-full bg-primary text-white"><Camera className="h-4 w-4" /></span>识别</button>
+        <button className="mobile-nav" type="button" onClick={openRecord}><span className="grid h-8 w-8 place-items-center rounded-full bg-primary text-white">{activeRecognitionJobId ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Camera className="h-4 w-4" />}</span>{activeRecognitionJobId ? "处理中" : "识别"}</button>
         <a className="mobile-nav" href="#history"><ClipboardList />历史</a>
       </nav>
 
@@ -448,8 +541,8 @@ export default function App() {
       </Dialog>
       <input ref={fileInputRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={(event) => startRecognition(event.target.files?.[0])} />
 
-      <Dialog open={loadingOpen} onOpenChange={() => {}}>
-        <DialogContent hideClose className="max-w-sm text-center"><div className="scan-preview mx-auto"><img src={preview} alt="待识别的体重截图" /><span className="animate-scan" /></div><DialogHeader className="items-center"><LoaderCircle className="h-5 w-5 animate-spin text-primary" /><DialogTitle>正在读取体重</DialogTitle><DialogDescription>AI 正在定位数值并校验单位</DialogDescription></DialogHeader></DialogContent>
+      <Dialog open={loadingOpen} onOpenChange={setLoadingOpen}>
+        <DialogContent className="max-w-sm text-center"><div className="scan-preview mx-auto"><img src={preview} alt="待识别的体重截图" /><span className="animate-scan" /></div><DialogHeader className="items-center"><LoaderCircle className="h-5 w-5 animate-spin text-primary" /><DialogTitle>后台识别中</DialogTitle><DialogDescription>原图已保存到服务器，关闭窗口或暂时断网不会中断识别。</DialogDescription></DialogHeader><Button variant="outline" onClick={() => setLoadingOpen(false)}>在后台继续</Button></DialogContent>
       </Dialog>
 
       <Dialog open={Boolean(photoCandidate)} onOpenChange={(open) => !open && setPhotoCandidate(null)}>

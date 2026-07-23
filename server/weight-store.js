@@ -3,7 +3,9 @@ const path = require("node:path");
 const { randomUUID } = require("node:crypto");
 const { DatabaseSync } = require("node:sqlite");
 
-const PENDING_TTL_MS = 10 * 60 * 1000;
+const PENDING_TTL_MS = 24 * 60 * 60 * 1000;
+const RECOGNITION_JOB_TTL_MS = 24 * 60 * 60 * 1000;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const IMAGE_EXTENSIONS = new Map([
   ["image/png", ".png"],
   ["image/jpeg", ".jpg"],
@@ -31,6 +33,27 @@ function mapEntry(row) {
     reward: row.reward,
     imageUrl: row.image_filename ? `/api/weight-records/${encodeURIComponent(row.id)}/image` : null,
     createdAt: row.created_at
+  };
+}
+
+function mapRecognitionJob(row) {
+  if (!row) return null;
+  const result = row.status === "succeeded" ? {
+    weight: row.weight,
+    unit: "kg",
+    confidence: row.confidence,
+    model: row.model,
+    recognitionId: row.recognition_id,
+    expiresAt: row.expires_at
+  } : null;
+  return {
+    jobId: row.id,
+    status: row.status,
+    imageUrl: row.image_filename || row.recognition_id ? `/api/recognition-jobs/${encodeURIComponent(row.id)}/image` : null,
+    result,
+    error: row.status === "failed" ? { code: row.error_code || "RECOGNITION_FAILED", message: row.error_message || "识别失败" } : null,
+    createdAt: new Date(row.created_at).toISOString(),
+    updatedAt: new Date(row.updated_at).toISOString()
   };
 }
 
@@ -74,10 +97,28 @@ class WeightStore {
         created_at INTEGER NOT NULL,
         expires_at INTEGER NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS recognition_jobs (
+        id TEXT PRIMARY KEY,
+        status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'succeeded', 'failed', 'confirmed', 'expired')),
+        model TEXT NOT NULL,
+        image_filename TEXT,
+        recognition_id TEXT,
+        weight REAL,
+        confidence INTEGER,
+        error_code TEXT,
+        error_message TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS recognition_jobs_status_created_idx
+      ON recognition_jobs (status, created_at DESC);
     `);
     this.ensureColumn("weight_records", "image_filename", "TEXT");
     this.ensureColumn("pending_recognitions", "image_filename", "TEXT");
     this.cleanupExpiredRecognitions(Date.now());
+    this.cleanupExpiredRecognitionJobs(Date.now());
     this.recalculateRewards();
   }
 
@@ -95,8 +136,16 @@ class WeightStore {
   }
 
   cleanupExpiredRecognitions(now) {
-    const expired = this.database.prepare("SELECT image_filename FROM pending_recognitions WHERE expires_at < ?").all(now);
+    const expired = this.database.prepare("SELECT id, image_filename FROM pending_recognitions WHERE expires_at < ?").all(now);
+    const expireJob = this.database.prepare("UPDATE recognition_jobs SET status = 'expired', updated_at = ? WHERE recognition_id = ? AND status = 'succeeded'");
+    expired.forEach((row) => expireJob.run(now, row.id));
     this.database.prepare("DELETE FROM pending_recognitions WHERE expires_at < ?").run(now);
+    expired.forEach((row) => this.removeImage(row.image_filename));
+  }
+
+  cleanupExpiredRecognitionJobs(now) {
+    const expired = this.database.prepare("SELECT image_filename FROM recognition_jobs WHERE expires_at < ?").all(now);
+    this.database.prepare("DELETE FROM recognition_jobs WHERE expires_at < ?").run(now);
     expired.forEach((row) => this.removeImage(row.image_filename));
   }
 
@@ -133,6 +182,137 @@ class WeightStore {
       wallet: entries[0]?.reward || 0,
       entries
     };
+  }
+
+  createRecognitionJob(image, model, requestedId) {
+    const id = requestedId || randomUUID();
+    if (!UUID_PATTERN.test(id)) {
+      throw Object.assign(new Error("识别任务 ID 无效"), { code: "INVALID_JOB_ID" });
+    }
+    const existing = this.database.prepare("SELECT * FROM recognition_jobs WHERE id = ?").get(id);
+    if (existing) return mapRecognitionJob(existing);
+
+    const extension = IMAGE_EXTENSIONS.get(image?.contentType);
+    if (!extension || !image?.buffer) {
+      throw Object.assign(new Error("识别任务缺少有效图片"), { code: "IMAGE_REQUIRED" });
+    }
+    const now = Date.now();
+    const imageFilename = `${id}${extension}`;
+    this.cleanupExpiredRecognitions(now);
+    this.cleanupExpiredRecognitionJobs(now);
+    fs.writeFileSync(this.imagePath(imageFilename), image.buffer, { mode: 0o600 });
+    try {
+      this.database.prepare(`
+        INSERT INTO recognition_jobs (id, status, model, image_filename, created_at, updated_at, expires_at)
+        VALUES (?, 'queued', ?, ?, ?, ?, ?)
+      `).run(id, model, imageFilename, now, now, now + RECOGNITION_JOB_TTL_MS);
+    } catch (error) {
+      this.removeImage(imageFilename);
+      throw error;
+    }
+    return mapRecognitionJob(this.database.prepare("SELECT * FROM recognition_jobs WHERE id = ?").get(id));
+  }
+
+  requeueInterruptedRecognitionJobs() {
+    const now = Date.now();
+    this.cleanupExpiredRecognitions(now);
+    this.cleanupExpiredRecognitionJobs(now);
+    this.database.prepare("UPDATE recognition_jobs SET status = 'queued', updated_at = ? WHERE status = 'running'").run(now);
+    return this.database.prepare("SELECT id FROM recognition_jobs WHERE status = 'queued' ORDER BY created_at ASC").all().map((row) => row.id);
+  }
+
+  claimRecognitionJob(jobId) {
+    const now = Date.now();
+    const claimed = this.database.prepare("UPDATE recognition_jobs SET status = 'running', updated_at = ? WHERE id = ? AND status = 'queued'").run(now, jobId);
+    if (!claimed.changes) return null;
+    return this.database.prepare("SELECT * FROM recognition_jobs WHERE id = ?").get(jobId);
+  }
+
+  getRecognitionJob(jobId) {
+    const now = Date.now();
+    this.cleanupExpiredRecognitions(now);
+    this.cleanupExpiredRecognitionJobs(now);
+    const row = this.database.prepare("SELECT * FROM recognition_jobs WHERE id = ?").get(jobId);
+    if (!row) throw Object.assign(new Error("识别任务不存在或已过期"), { code: "RECOGNITION_JOB_NOT_FOUND", statusCode: 404 });
+    return mapRecognitionJob(row);
+  }
+
+  getActiveRecognitionJob() {
+    const now = Date.now();
+    this.cleanupExpiredRecognitions(now);
+    this.cleanupExpiredRecognitionJobs(now);
+    const row = this.database.prepare(`
+      SELECT jobs.*
+      FROM recognition_jobs AS jobs
+      LEFT JOIN pending_recognitions AS pending
+        ON pending.id = jobs.recognition_id AND pending.expires_at >= ?
+      WHERE jobs.status IN ('queued', 'running')
+         OR (jobs.status = 'succeeded' AND pending.id IS NOT NULL)
+      ORDER BY jobs.created_at DESC
+      LIMIT 1
+    `).get(now);
+    return mapRecognitionJob(row);
+  }
+
+  getRecognitionJobImageData(jobId) {
+    const row = this.database.prepare("SELECT image_filename FROM recognition_jobs WHERE id = ?").get(jobId);
+    if (!row?.image_filename) throw Object.assign(new Error("识别任务图片不存在"), { code: "IMAGE_NOT_FOUND", statusCode: 404 });
+    const filePath = this.imagePath(row.image_filename);
+    if (!fs.existsSync(filePath)) throw Object.assign(new Error("识别任务图片文件不存在"), { code: "IMAGE_NOT_FOUND", statusCode: 404 });
+    const contentType = IMAGE_CONTENT_TYPES.get(path.extname(row.image_filename).toLowerCase()) || "application/octet-stream";
+    const buffer = fs.readFileSync(filePath);
+    return { contentType, buffer, dataUrl: `data:${contentType};base64,${buffer.toString("base64")}` };
+  }
+
+  getRecognitionJobImage(jobId) {
+    const job = this.database.prepare("SELECT image_filename, recognition_id FROM recognition_jobs WHERE id = ?").get(jobId);
+    if (!job) throw Object.assign(new Error("识别任务不存在或已过期"), { code: "RECOGNITION_JOB_NOT_FOUND", statusCode: 404 });
+    let imageFilename = job.image_filename;
+    if (!imageFilename && job.recognition_id) {
+      imageFilename = this.database.prepare("SELECT image_filename FROM pending_recognitions WHERE id = ?").get(job.recognition_id)?.image_filename;
+    }
+    if (!imageFilename) throw Object.assign(new Error("识别任务图片不存在"), { code: "IMAGE_NOT_FOUND", statusCode: 404 });
+    const filePath = this.imagePath(imageFilename);
+    if (!fs.existsSync(filePath)) throw Object.assign(new Error("识别任务图片文件不存在"), { code: "IMAGE_NOT_FOUND", statusCode: 404 });
+    return {
+      body: fs.readFileSync(filePath),
+      contentType: IMAGE_CONTENT_TYPES.get(path.extname(imageFilename).toLowerCase()) || "application/octet-stream"
+    };
+  }
+
+  completeRecognitionJob(jobId, result, model, image) {
+    const job = this.database.prepare("SELECT * FROM recognition_jobs WHERE id = ? AND status = 'running'").get(jobId);
+    if (!job) return null;
+    const pending = this.createPendingRecognition(result, model, image);
+    const now = Date.now();
+    try {
+      this.database.prepare(`
+        UPDATE recognition_jobs
+        SET status = 'succeeded', model = ?, recognition_id = ?, weight = ?, confidence = ?,
+            image_filename = NULL, error_code = NULL, error_message = NULL, updated_at = ?, expires_at = ?
+        WHERE id = ? AND status = 'running'
+      `).run(model, pending.id, result.weight, result.confidence, now, pending.expiresAt, jobId);
+    } catch (error) {
+      const orphan = this.database.prepare("SELECT image_filename FROM pending_recognitions WHERE id = ?").get(pending.id);
+      this.database.prepare("DELETE FROM pending_recognitions WHERE id = ?").run(pending.id);
+      this.removeImage(orphan?.image_filename);
+      throw error;
+    }
+    this.removeImage(job.image_filename);
+    return this.getRecognitionJob(jobId);
+  }
+
+  failRecognitionJob(jobId, error) {
+    const job = this.database.prepare("SELECT image_filename FROM recognition_jobs WHERE id = ? AND status IN ('queued', 'running')").get(jobId);
+    if (!job) return null;
+    const now = Date.now();
+    this.database.prepare(`
+      UPDATE recognition_jobs
+      SET status = 'failed', image_filename = NULL, error_code = ?, error_message = ?, updated_at = ?
+      WHERE id = ?
+    `).run(error.code || "RECOGNITION_FAILED", String(error.message || "识别失败").slice(0, 500), now, jobId);
+    this.removeImage(job.image_filename);
+    return this.getRecognitionJob(jobId);
   }
 
   createPendingRecognition(result, model, image) {
@@ -199,6 +379,7 @@ class WeightStore {
           image_filename = excluded.image_filename
       `).run(entryId, recordDate, pending.weight, pending.confidence, pending.model, reward, imageMoved ? imageFilename : existing?.image_filename || null, createdAt);
       this.database.prepare("DELETE FROM pending_recognitions WHERE id = ?").run(recognitionId);
+      this.database.prepare("UPDATE recognition_jobs SET status = 'confirmed', updated_at = ? WHERE recognition_id = ?").run(now, recognitionId);
       this.database.exec("COMMIT");
       transactionStarted = false;
     } catch (error) {

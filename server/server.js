@@ -37,6 +37,8 @@ function getConfig(env = process.env) {
     apiUrl: env.AI_API_URL || "https://yunllm.com/v1/chat/completions",
     apiKey: env.AI_API_KEY || "",
     model: env.AI_MODEL || "gpt-4o",
+    recognitionEngine: env.RECOGNITION_ENGINE === "ddddocr" ? "ddddocr" : "vision",
+    ddddocrUrl: env.DDDDOCR_API_URL || "http://127.0.0.1:8000/recognize",
     timeoutMs: numberFromEnv(env.AI_TIMEOUT_MS, 45000),
     maxImageBytes: numberFromEnv(env.MAX_IMAGE_BYTES, DEFAULT_MAX_IMAGE_BYTES),
     maxBodyBytes: numberFromEnv(env.MAX_BODY_BYTES, DEFAULT_MAX_BODY_BYTES),
@@ -187,6 +189,61 @@ function parseModelContent(content) {
   };
 }
 
+function parseDdddOcrContent(text, rawConfidence = 0.9) {
+  if (typeof text !== "string" || !text.trim()) throw new Error("ddddocr 未识别到文字");
+  const normalized = text.replace(/，/g, ",").replace(/。/g, ".");
+  const labeled = [...normalized.matchAll(/(\d{2,3}(?:[.,]\d{1,2})?)\s*(kg|公斤|千克|斤|jin|lbs?|磅)/gi)];
+  let rawWeight;
+  let unit = "斤";
+
+  for (const match of labeled) {
+    const value = Number(match[1].replace(",", "."));
+    const candidateUnit = match[2].toLowerCase();
+    const weightKg = candidateUnit === "斤" || candidateUnit === "jin"
+      ? value / 2
+      : candidateUnit === "lb" || candidateUnit === "lbs" || candidateUnit === "磅"
+        ? value / 2.2046226218
+        : value;
+    if (Number.isFinite(weightKg) && weightKg >= 30 && weightKg <= 250) {
+      rawWeight = value;
+      unit = candidateUnit;
+      break;
+    }
+  }
+
+  if (rawWeight === undefined) {
+    const candidates = [...normalized.matchAll(/(?:^|[^\d])((?:\d{2,3})(?:[.,]\d{1,2})?)(?!\d)/g)]
+      .map((match) => ({ value: Number(match[1].replace(",", ".")), decimal: /[.,]/.test(match[1]) }))
+      .filter((candidate) => candidate.value >= 60 && candidate.value <= 500)
+      .sort((left, right) => Number(right.decimal) - Number(left.decimal));
+    if (!candidates.length) throw new Error("ddddocr 未识别到 60 至 500 斤之间的有效体重");
+    rawWeight = candidates[0].value;
+  }
+
+  let weight = rawWeight;
+  if (unit === "斤" || unit === "jin") weight /= 2;
+  if (unit === "lb" || unit === "lbs" || unit === "磅") weight /= 2.2046226218;
+  if (!Number.isFinite(weight) || weight < 30 || weight > 250) {
+    throw new Error("ddddocr 未识别到 60 至 500 斤之间的有效体重");
+  }
+
+  let confidence = Number(rawConfidence);
+  if (confidence > 1) confidence /= 100;
+  confidence = Number.isFinite(confidence) ? Math.min(1, Math.max(0, confidence)) : 0.9;
+  if (confidence < MIN_RECOGNITION_CONFIDENCE) {
+    throw Object.assign(new Error("ddddocr 识别可信度不足 85%，请上传更清晰的截图"), { code: "LOW_CONFIDENCE" });
+  }
+  return {
+    weight: Math.round(weight * 10) / 10,
+    unit: "kg",
+    confidence: Math.round(confidence * 100)
+  };
+}
+
+function isRecognitionConfigured(config) {
+  return config.recognitionEngine === "ddddocr" ? Boolean(config.ddddocrUrl) : Boolean(config.apiKey);
+}
+
 async function callVisionModel(image, config, fetchImpl) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), config.timeoutMs);
@@ -260,18 +317,109 @@ async function callVisionModel(image, config, fetchImpl) {
   }
 }
 
-async function handleRecognition(request, response, config, fetchImpl, weightStore) {
-  if (!config.apiKey) {
-    sendJson(response, 503, { error: "AI_API_KEY 未配置", code: "AI_NOT_CONFIGURED" });
+async function callDdddOcr(image, config, fetchImpl) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), config.timeoutMs);
+  try {
+    const upstream = await fetchImpl(config.ddddocrUrl, {
+      method: "POST",
+      headers: { Accept: "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify({ image }),
+      signal: controller.signal
+    });
+    const responseText = await upstream.text();
+    let responseData;
+    try {
+      responseData = JSON.parse(responseText);
+    } catch {
+      throw Object.assign(new Error("ddddocr 服务返回了无效响应"), { statusCode: 502 });
+    }
+    if (!upstream.ok) {
+      throw Object.assign(new Error(`ddddocr 调用失败：${responseData.error || `HTTP ${upstream.status}`}`), { statusCode: 502 });
+    }
+    return parseDdddOcrContent(responseData.text, responseData.confidence);
+  } catch (error) {
+    if (error.name === "AbortError") throw Object.assign(new Error("ddddocr 识别超时，请重试"), { statusCode: 504 });
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function createRecognitionWorker(weightStore, settingsStore, fetchImpl) {
+  const queue = [];
+  const queuedIds = new Set();
+  let processing = false;
+  let idleResolvers = [];
+
+  function settleIdle() {
+    if (processing || queue.length) return;
+    const resolvers = idleResolvers;
+    idleResolvers = [];
+    resolvers.forEach((resolve) => resolve());
+  }
+
+  async function processQueue() {
+    if (processing) return;
+    processing = true;
+    while (queue.length) {
+      const jobId = queue.shift();
+      queuedIds.delete(jobId);
+      try {
+        const job = weightStore.claimRecognitionJob(jobId);
+        if (!job) continue;
+        const config = settingsStore.getAiConfig();
+        if (!isRecognitionConfigured(config)) throw Object.assign(new Error("识别服务尚未配置"), { code: "AI_NOT_CONFIGURED" });
+        const image = weightStore.getRecognitionJobImageData(jobId);
+        const usingDdddOcr = config.recognitionEngine === "ddddocr";
+        const result = usingDdddOcr
+          ? await callDdddOcr(image.dataUrl, config, fetchImpl)
+          : await callVisionModel(image.dataUrl, config, fetchImpl);
+        weightStore.completeRecognitionJob(jobId, result, usingDdddOcr ? "ddddocr" : config.model, image);
+      } catch (error) {
+        try {
+          weightStore.failRecognitionJob(jobId, error);
+        } catch (storeError) {
+          console.error(`识别任务 ${jobId} 状态保存失败：`, storeError);
+        }
+      }
+    }
+    processing = false;
+    settleIdle();
+  }
+
+  function enqueue(jobId) {
+    if (queuedIds.has(jobId)) return;
+    queuedIds.add(jobId);
+    queue.push(jobId);
+    setImmediate(processQueue);
+  }
+
+  function resume() {
+    weightStore.requeueInterruptedRecognitionJobs().forEach(enqueue);
+  }
+
+  function waitForIdle() {
+    if (!processing && !queue.length) return Promise.resolve();
+    return new Promise((resolve) => idleResolvers.push(resolve));
+  }
+
+  return { enqueue, resume, waitForIdle };
+}
+
+async function handleRecognitionUpload(request, response, config, weightStore, recognitionWorker) {
+  if (!isRecognitionConfigured(config)) {
+    sendJson(response, 503, { error: "识别服务未配置", code: "AI_NOT_CONFIGURED" });
     return;
   }
 
   try {
     const body = await readJsonBody(request, config.maxBodyBytes);
     const validatedImage = validateImage(body.image, config.maxImageBytes);
-    const result = await callVisionModel(body.image, config, fetchImpl);
-    const pending = weightStore.createPendingRecognition(result, config.model, validatedImage);
-    sendJson(response, 200, { ...result, model: config.model, recognitionId: pending.id, expiresAt: pending.expiresAt });
+    const model = config.recognitionEngine === "ddddocr" ? "ddddocr" : config.model;
+    const job = weightStore.createRecognitionJob(validatedImage, model, body.jobId);
+    sendJson(response, 202, job);
+    recognitionWorker.enqueue(job.jobId);
   } catch (error) {
     const statusCode = error.statusCode || (error.code === "BODY_TOO_LARGE" ? 413 : 400);
     sendJson(response, statusCode, {
@@ -311,6 +459,8 @@ function createAppServer(options = {}) {
   const auth = options.auth || new AdminAuth(config);
   const weightStore = options.weightStore || new WeightStore(config);
   const ownsWeightStore = !options.weightStore;
+  const recognitionWorker = createRecognitionWorker(weightStore, settingsStore, fetchImpl);
+  recognitionWorker.resume();
 
   const server = http.createServer(async (request, response) => {
     const requestId = randomUUID();
@@ -320,7 +470,7 @@ function createAppServer(options = {}) {
     if (request.method === "GET" && pathname === "/health") {
       try {
         const aiConfig = settingsStore.getAiConfig();
-        sendJson(response, 200, { status: "ok", aiConfigured: Boolean(aiConfig.apiKey), model: aiConfig.model });
+        sendJson(response, 200, { status: "ok", aiConfigured: isRecognitionConfigured(aiConfig), model: aiConfig.recognitionEngine === "ddddocr" ? "ddddocr" : aiConfig.model });
       } catch (error) {
         sendJson(response, 503, { status: "error", error: error.message });
       }
@@ -329,10 +479,44 @@ function createAppServer(options = {}) {
     if (request.method === "GET" && pathname === "/api/config") {
       try {
         const aiConfig = settingsStore.getAiConfig();
-        sendJson(response, 200, { aiConfigured: Boolean(aiConfig.apiKey), model: aiConfig.model });
+        sendJson(response, 200, { aiConfigured: isRecognitionConfigured(aiConfig), model: aiConfig.recognitionEngine === "ddddocr" ? "ddddocr" : aiConfig.model });
       } catch (error) {
         sendJson(response, 503, { aiConfigured: false, error: error.message });
       }
+      return;
+    }
+    if (pathname.startsWith("/api/recognition-jobs")) {
+      if (!auth.isAuthenticated(request)) {
+        sendJson(response, 401, { error: "请先登录", code: "UNAUTHORIZED" });
+        return;
+      }
+      try {
+        if (request.method === "GET" && pathname === "/api/recognition-jobs/active") {
+          sendJson(response, 200, { job: weightStore.getActiveRecognitionJob() });
+          return;
+        }
+        const imageMatch = pathname.match(/^\/api\/recognition-jobs\/([^/]+)\/image$/);
+        if ((request.method === "GET" || request.method === "HEAD") && imageMatch) {
+          const image = weightStore.getRecognitionJobImage(decodeURIComponent(imageMatch[1]));
+          response.writeHead(200, {
+            "Content-Type": image.contentType,
+            "Content-Length": image.body.length,
+            "Cache-Control": "private, no-store"
+          });
+          if (request.method === "HEAD") response.end();
+          else response.end(image.body);
+          return;
+        }
+        const jobMatch = pathname.match(/^\/api\/recognition-jobs\/([^/]+)$/);
+        if (request.method === "GET" && jobMatch) {
+          sendJson(response, 200, weightStore.getRecognitionJob(decodeURIComponent(jobMatch[1])));
+          return;
+        }
+      } catch (error) {
+        sendJson(response, error.statusCode || 400, { error: error.message || "识别任务读取失败", code: error.code || "RECOGNITION_JOB_READ_FAILED" });
+        return;
+      }
+      sendJson(response, 404, { error: "Not found", code: "NOT_FOUND" });
       return;
     }
     if (pathname.startsWith("/api/dashboard") || pathname.startsWith("/api/weight-records")) {
@@ -382,7 +566,7 @@ function createAppServer(options = {}) {
     if (request.method === "GET" && pathname === "/api/admin/status") {
       let aiConfigured = false;
       try {
-        aiConfigured = Boolean(settingsStore.getAiConfig().apiKey);
+        aiConfigured = isRecognitionConfigured(settingsStore.getAiConfig());
       } catch {}
       sendJson(response, 200, {
         setupRequired: settingsStore.isSetupRequired(),
@@ -473,7 +657,7 @@ function createAppServer(options = {}) {
         return;
       }
       try {
-        await handleRecognition(request, response, settingsStore.getAiConfig(), fetchImpl, weightStore);
+        await handleRecognitionUpload(request, response, settingsStore.getAiConfig(), weightStore, recognitionWorker);
       } catch (error) {
         sendJson(response, 503, { error: error.message, code: "AI_CONFIG_INVALID" });
       }
@@ -484,6 +668,7 @@ function createAppServer(options = {}) {
   });
   if (ownsWeightStore) server.on("close", () => weightStore.close());
   server.weightStore = weightStore;
+  server.recognitionWorker = recognitionWorker;
   return server;
 }
 
@@ -498,4 +683,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { createAppServer, getConfig, parseModelContent, validateImage };
+module.exports = { createAppServer, getConfig, parseDdddOcrContent, parseModelContent, validateImage };

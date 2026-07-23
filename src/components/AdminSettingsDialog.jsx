@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { CheckCircle2, KeyRound, LoaderCircle, LogOut, Save, Settings2, ShieldCheck } from "lucide-react";
+import { CheckCircle2, KeyRound, LoaderCircle, LogOut, Save, ScanText, Settings2, ShieldCheck, Sparkles } from "lucide-react";
 import { apiRequest } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -15,11 +15,14 @@ export function AdminSettingsDialog({ open, onOpenChange, onConfigured, notify, 
   const [passwordConfirm, setPasswordConfirm] = useState("");
   const [authError, setAuthError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [settings, setSettings] = useState({ apiUrl: "", model: "", apiKey: "", jsonMode: true, apiKeyConfigured: false, apiKeyMask: "" });
+  const [settings, setSettings] = useState({ apiUrl: "", model: "", apiKey: "", recognitionEngine: "vision", ddddocrUrl: "", jsonMode: true, apiKeyConfigured: false, apiKeyMask: "", recognitionConfigured: false });
   const [settingsError, setSettingsError] = useState("");
   const [showPasswordForm, setShowPasswordForm] = useState(false);
   const [currentPassword, setCurrentPassword] = useState("");
   const [nextPassword, setNextPassword] = useState("");
+  const recognitionConfigured = settings.recognitionEngine === "ddddocr"
+    ? Boolean(settings.ddddocrUrl)
+    : settings.apiKeyConfigured || Boolean(settings.apiKey.trim());
 
   async function loadSettings() {
     const data = await apiRequest("/api/admin/settings");
@@ -73,11 +76,11 @@ export function AdminSettingsDialog({ open, onOpenChange, onConfigured, notify, 
     try {
       const data = await apiRequest("/api/admin/settings", {
         method: "PUT",
-        body: JSON.stringify({ apiUrl: settings.apiUrl, model: settings.model, apiKey: settings.apiKey, jsonMode: settings.jsonMode })
+        body: JSON.stringify({ apiUrl: settings.apiUrl, model: settings.model, apiKey: settings.apiKey, recognitionEngine: settings.recognitionEngine, ddddocrUrl: settings.ddddocrUrl, jsonMode: settings.jsonMode })
       });
       setSettings({ ...data, apiKey: "" });
-      onConfigured(data.apiKeyConfigured);
-      notify("模型配置已安全保存");
+      onConfigured(data.recognitionConfigured);
+      notify("识别配置已安全保存");
     } catch (error) {
       setSettingsError(error.message);
     } finally {
@@ -138,17 +141,27 @@ export function AdminSettingsDialog({ open, onOpenChange, onConfigured, notify, 
           <>
             <DialogHeader>
               <div className="flex items-center justify-between pr-8">
-                <div className="flex items-center gap-3"><div className="grid h-10 w-10 place-items-center rounded-lg bg-secondary text-primary"><Settings2 className="h-5 w-5" /></div><div><DialogTitle>大模型设置</DialogTitle><DialogDescription className="mt-1">系统级识图服务配置</DialogDescription></div></div>
-                <Badge className={settings.apiKeyConfigured ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"} variant="outline"><span className="mr-1.5 h-1.5 w-1.5 rounded-full bg-current" />{settings.apiKeyConfigured ? "已配置" : "待配置"}</Badge>
+                <div className="flex items-center gap-3"><div className="grid h-10 w-10 place-items-center rounded-lg bg-secondary text-primary"><Settings2 className="h-5 w-5" /></div><div><DialogTitle>识别设置</DialogTitle><DialogDescription className="mt-1">选择体重图片识别引擎</DialogDescription></div></div>
+                <Badge className={recognitionConfigured ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"} variant="outline"><span className="mr-1.5 h-1.5 w-1.5 rounded-full bg-current" />{recognitionConfigured ? "已配置" : "待配置"}</Badge>
               </div>
             </DialogHeader>
             <form className="space-y-4" onSubmit={handleSave}>
-              <div className="space-y-2"><Label htmlFor="api-url">API 地址</Label><Input id="api-url" type="url" value={settings.apiUrl} onChange={(event) => setSettings((value) => ({ ...value, apiUrl: event.target.value }))} required /></div>
-              <div className="space-y-2"><Label htmlFor="model-name">视觉模型</Label><Input id="model-name" value={settings.model} onChange={(event) => setSettings((value) => ({ ...value, model: event.target.value }))} required /></div>
-              <div className="space-y-2"><Label htmlFor="api-key">API Key</Label><div className="relative"><KeyRound className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" /><Input id="api-key" className="pl-9" type="password" value={settings.apiKey} onChange={(event) => setSettings((value) => ({ ...value, apiKey: event.target.value }))} placeholder={settings.apiKeyConfigured ? "留空则保留现有 Key" : "输入 API Key"} /></div>{settings.apiKeyConfigured && <p className="text-xs text-muted-foreground">已配置 {settings.apiKeyMask}</p>}</div>
-              <div className="flex items-center justify-between border-y py-4"><div><Label htmlFor="json-mode">JSON 输出模式</Label><p className="mt-1 text-xs text-muted-foreground">模型不支持 response_format 时关闭</p></div><Switch id="json-mode" checked={settings.jsonMode} onCheckedChange={(checked) => setSettings((value) => ({ ...value, jsonMode: checked }))} /></div>
+              <div className="grid grid-cols-2 gap-1 rounded-md border bg-stone-100 p-1" role="group" aria-label="识别引擎">
+                <button type="button" aria-pressed={settings.recognitionEngine === "vision"} className={`flex min-h-11 items-center justify-center gap-2 rounded px-3 text-xs font-medium transition-colors ${settings.recognitionEngine === "vision" ? "bg-white text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`} onClick={() => setSettings((value) => ({ ...value, recognitionEngine: "vision" }))}><Sparkles className="h-4 w-4" />视觉大模型</button>
+                <button type="button" aria-pressed={settings.recognitionEngine === "ddddocr"} className={`flex min-h-11 items-center justify-center gap-2 rounded px-3 text-xs font-medium transition-colors ${settings.recognitionEngine === "ddddocr" ? "bg-white text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`} onClick={() => setSettings((value) => ({ ...value, recognitionEngine: "ddddocr" }))}><ScanText className="h-4 w-4" />ddddocr</button>
+              </div>
+              {settings.recognitionEngine === "vision" ? (
+                <>
+                  <div className="space-y-2"><Label htmlFor="api-url">API 地址</Label><Input id="api-url" type="url" value={settings.apiUrl} onChange={(event) => setSettings((value) => ({ ...value, apiUrl: event.target.value }))} required /></div>
+                  <div className="space-y-2"><Label htmlFor="model-name">视觉模型</Label><Input id="model-name" value={settings.model} onChange={(event) => setSettings((value) => ({ ...value, model: event.target.value }))} required /></div>
+                  <div className="space-y-2"><Label htmlFor="api-key">API Key</Label><div className="relative"><KeyRound className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" /><Input id="api-key" className="pl-9" type="password" value={settings.apiKey} onChange={(event) => setSettings((value) => ({ ...value, apiKey: event.target.value }))} placeholder={settings.apiKeyConfigured ? "留空则保留现有 Key" : "输入 API Key"} /></div>{settings.apiKeyConfigured && <p className="text-xs text-muted-foreground">已配置 {settings.apiKeyMask}</p>}</div>
+                  <div className="flex items-center justify-between border-y py-4"><div><Label htmlFor="json-mode">JSON 输出模式</Label><p className="mt-1 text-xs text-muted-foreground">模型不支持 response_format 时关闭</p></div><Switch id="json-mode" checked={settings.jsonMode} onCheckedChange={(checked) => setSettings((value) => ({ ...value, jsonMode: checked }))} /></div>
+                </>
+              ) : (
+                <div className="space-y-2"><Label htmlFor="ddddocr-url">ddddocr 服务地址</Label><Input id="ddddocr-url" type="url" value={settings.ddddocrUrl} onChange={(event) => setSettings((value) => ({ ...value, ddddocrUrl: event.target.value }))} placeholder="http://127.0.0.1:8000/recognize" required /><p className="text-xs text-muted-foreground">Docker 镜像已内置 ddddocr，默认地址无需修改</p></div>
+              )}
               {settingsError && <p className="text-sm text-destructive">{settingsError}</p>}
-              <Button className="w-full" size="lg" disabled={busy}>{busy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}保存模型配置</Button>
+              <Button className="w-full" size="lg" disabled={busy}>{busy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}保存识别配置</Button>
             </form>
             <div className="border-t pt-4">
               <Button variant="ghost" size="sm" className="px-0" onClick={() => setShowPasswordForm((value) => !value)}>修改管理员密码</Button>
