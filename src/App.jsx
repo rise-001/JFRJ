@@ -154,7 +154,7 @@ export default function App() {
   const [deleteCandidate, setDeleteCandidate] = useState(null);
   const [photoCandidate, setPhotoCandidate] = useState(null);
   const [rewardOpen, setRewardOpen] = useState(false);
-  const [reward, setReward] = useState({ amount: 0, loss: 0 });
+  const [reward, setReward] = useState({ amount: 0, total: 0 });
   const [preview, setPreview] = useState("");
   const [historyExpanded, setHistoryExpanded] = useState(false);
   const [toast, setToast] = useState("");
@@ -252,8 +252,8 @@ export default function App() {
       const result = await apiRequest("/api/weight-records/confirm", { method: "POST", body: JSON.stringify({ recognitionId: recognized.recognitionId }) });
       setDashboard(result.dashboard);
       setRecordOpen(false);
-      if (result.entry.reward > 0 && !result.replaced) {
-        setReward({ amount: result.entry.reward, loss: result.entry.reward / 200 });
+      if (result.rewardDelta > 0 && !result.replaced) {
+        setReward({ amount: result.rewardDelta, total: result.entry.reward });
         setRewardOpen(true);
       } else notify(result.replaced ? "已更新当天的 AI 记录" : "AI 记录已保存");
     } catch (error) {
@@ -370,7 +370,7 @@ export default function App() {
             <aside className="grid content-start gap-4 xl:col-start-1 xl:row-start-1">
               <Card id="wallet" className="wallet-surface relative isolate scroll-mt-6 overflow-hidden border-0 text-white shadow-peach">
                 <WalletCoinScatter />
-                <CardContent className="relative z-10 p-5"><div className="flex items-center justify-between"><p className="text-xs text-white/75">轻盈钱包</p><span className="wallet-icon-motion" aria-hidden="true"><WalletCards className="h-5 w-5 text-white/80" /></span></div><AnimatedWalletBalance value={stats.wallet} /><p className="mt-2 text-[10px] text-white/70">每减 0.2 斤，奖励 20 元虚拟币</p></CardContent>
+                <CardContent className="relative z-10 p-5"><div className="flex items-center justify-between"><p className="text-xs text-white/75">轻盈钱包</p><span className="wallet-icon-motion" aria-hidden="true"><WalletCards className="h-5 w-5 text-white/80" /></span></div><AnimatedWalletBalance value={stats.wallet} /><p className="mt-2 text-[10px] text-white/70">较起始体重每减 0.2 斤，累计奖励 20 元</p></CardContent>
               </Card>
 
               <Card className="border-stone-200/80 bg-white/80 shadow-soft">
@@ -394,7 +394,7 @@ export default function App() {
           <section id="history" className="scroll-mt-6 pt-8">
             <div className="flex items-end justify-between"><div><p className="text-xs text-muted-foreground">历史记录</p><h2 className="mt-1 text-lg font-semibold">最近的体重变化</h2></div><Badge variant="outline" className="bg-white/60">共 {entries.length} 条</Badge></div>
             <div className="mt-4 overflow-hidden rounded-lg border bg-white/70">
-              <div className="hidden grid-cols-[1.1fr_52px_.75fr_.75fr_.8fr_.65fr_40px] gap-3 border-b bg-stone-50/80 px-5 py-3 text-[10px] text-muted-foreground md:grid"><span>日期</span><span>照片</span><span>体重</span><span>较上次</span><span>记录方式</span><span>奖励</span><span /></div>
+              <div className="hidden grid-cols-[1.1fr_52px_.75fr_.75fr_.8fr_.65fr_40px] gap-3 border-b bg-stone-50/80 px-5 py-3 text-[10px] text-muted-foreground md:grid"><span>日期</span><span>照片</span><span>体重</span><span>较上次</span><span>记录方式</span><span>累计奖励</span><span /></div>
               {visibleEntries.map((entry, index) => {
                 const nextOlder = entries[entries.findIndex((item) => item.id === entry.id) + 1];
                 const change = nextOlder ? entry.weight - nextOlder.weight : 0;
@@ -405,7 +405,7 @@ export default function App() {
                     <strong className="text-right text-sm md:text-left">{formatWeightJin(entry.weight)}</strong>
                     <span className={`hidden text-xs md:block ${change < 0 ? "text-emerald-700" : change > 0 ? "text-amber-700" : "text-muted-foreground"}`}>{nextOlder ? signedWeight(change) : "起始记录"}</span>
                     <span className="hidden items-center gap-1.5 text-xs text-muted-foreground md:flex"><Sparkles className="h-3.5 w-3.5 text-primary" />AI {entry.confidence || "--"}%</span>
-                    <span className="hidden text-xs md:block">{entry.reward ? <span className="text-emerald-700">+¥{entry.reward}</span> : "--"}</span>
+                    <span className="hidden text-xs md:block">{entry.reward ? <span className="text-emerald-700">¥{entry.reward}</span> : "--"}</span>
                     <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive" onClick={() => setDeleteCandidate(entry)} aria-label={`删除 ${entry.date} 的记录`} title="删除记录"><Trash2 className="h-3.5 w-3.5" /></Button>
                   </div>
                 );
@@ -469,7 +469,7 @@ export default function App() {
 
       <Dialog open={rewardOpen} onOpenChange={setRewardOpen}>
         {rewardOpen && <CoinRain />}
-        <DialogContent className="z-[70] max-w-sm text-center"><div className="mx-auto grid h-16 w-16 place-items-center rounded-full border-[6px] border-[#ffd570] bg-[#f5b64f] font-serif text-3xl font-bold text-white shadow-peach">¥</div><DialogHeader className="items-center"><DialogDescription>轻盈奖励到账</DialogDescription><DialogTitle className="text-3xl text-primary">+¥{reward.amount}</DialogTitle><DialogDescription>比上次轻了 {kgToJin(reward.loss).toFixed(1)} 斤</DialogDescription></DialogHeader><Button size="lg" className="bg-stone-900 hover:bg-stone-800" onClick={() => setRewardOpen(false)}>收下奖励</Button></DialogContent>
+        <DialogContent className="z-[70] max-w-sm text-center"><div className="mx-auto grid h-16 w-16 place-items-center rounded-full border-[6px] border-[#ffd570] bg-[#f5b64f] font-serif text-3xl font-bold text-white shadow-peach">¥</div><DialogHeader className="items-center"><DialogDescription>轻盈奖励到账</DialogDescription><DialogTitle className="text-3xl text-primary">+¥{reward.amount}</DialogTitle><DialogDescription>当前累计奖励 ¥{reward.total}</DialogDescription></DialogHeader><Button size="lg" className="bg-stone-900 hover:bg-stone-800" onClick={() => setRewardOpen(false)}>收下奖励</Button></DialogContent>
       </Dialog>
 
       <Toast message={toast} />

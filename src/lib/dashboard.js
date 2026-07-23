@@ -16,6 +16,7 @@ export function createInitialDashboard() {
   return {
     profile: { startWeight: 70, goalWeight: 60 },
     walletBase: 0,
+    wallet: 0,
     entries: []
   };
 }
@@ -42,7 +43,9 @@ export function getDashboardStats(dashboard) {
   const totalLoss = hasEntries ? dashboard.profile.startWeight - current : 0;
   const targetSpan = dashboard.profile.startWeight - dashboard.profile.goalWeight;
   const progress = targetSpan > 0 ? Math.max(0, Math.min(100, (totalLoss / targetSpan) * 100)) : 0;
-  const wallet = dashboard.walletBase + entries.reduce((sum, entry) => sum + (entry.reward || 0), 0);
+  const wallet = Number.isFinite(dashboard.wallet)
+    ? dashboard.wallet
+    : dashboard.walletBase + (entries[0]?.reward || 0);
   const thirtyDaysAgo = dateOffset(-29);
   const recentMonth = entries.filter((entry) => entry.date >= thirtyDaysAgo);
   const monthStart = recentMonth.at(-1)?.weight ?? current;

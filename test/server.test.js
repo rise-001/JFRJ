@@ -5,6 +5,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { createAppServer, parseModelContent } = require("../server/server");
 const { SystemSettingsStore } = require("../server/system-store");
+const { WeightStore } = require("../server/weight-store");
 
 function createTestConfig(t, overrides = {}) {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "qingying-test-"));
@@ -73,6 +74,30 @@ test("解析标准 JSON、代码块和斤单位", () => {
   assert.throws(() => parseModelContent('{"weightKg":65.4,"confidence":0.84}'), /可信度不足/);
 });
 
+test("每条记录按起始体重计算累计奖励并自动修正旧账本", (t) => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "qingying-reward-test-"));
+  t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
+  let store = new WeightStore({ dataDir, timeZone: "Asia/Shanghai" });
+  store.database.prepare(`
+    INSERT INTO weight_records (id, record_date, weight, confidence, model, reward, created_at)
+    VALUES ('first-entry', '2026-07-23', 65, 95, 'vision-test', 0, '2026-07-23T08:00:00.000Z')
+  `).run();
+  store.database.prepare(`
+    INSERT INTO weight_records (id, record_date, weight, confidence, model, reward, created_at)
+    VALUES ('second-entry', '2026-07-24', 66, 95, 'vision-test', 0, '2026-07-24T08:00:00.000Z')
+  `).run();
+  store.close();
+
+  store = new WeightStore({ dataDir, timeZone: "Asia/Shanghai" });
+  let dashboard = store.getDashboard();
+  assert.deepEqual(dashboard.entries.map((entry) => entry.reward), [800, 1000]);
+  assert.equal(dashboard.wallet, 800);
+  dashboard = store.updateProfile(68, 60);
+  assert.deepEqual(dashboard.entries.map((entry) => entry.reward), [400, 600]);
+  assert.equal(dashboard.wallet, 400);
+  store.close();
+});
+
 test("识别接口转发图片并规范化模型结果", async (t) => {
   let upstreamRequest;
   const { config, settingsStore } = createTestConfig(t, { apiKey: "test-key", adminPassword: "secure-pass-123" });
@@ -124,6 +149,9 @@ test("识别接口转发图片并规范化模型结果", async (t) => {
   const saved = await confirm.json();
   assert.equal(saved.dashboard.entries.length, 1);
   assert.equal(saved.dashboard.entries[0].weight, 65.4);
+  assert.equal(saved.entry.reward, 920);
+  assert.equal(saved.rewardDelta, 920);
+  assert.equal(saved.dashboard.wallet, 920);
   assert.match(saved.dashboard.entries[0].imageUrl, new RegExp(`/api/weight-records/${saved.entry.id}/image$`));
 
   const imageResponse = await fetch(`${baseUrl}${saved.entry.imageUrl}`, { headers: { Cookie: cookie } });

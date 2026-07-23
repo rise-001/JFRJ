@@ -78,6 +78,7 @@ class WeightStore {
     this.ensureColumn("weight_records", "image_filename", "TEXT");
     this.ensureColumn("pending_recognitions", "image_filename", "TEXT");
     this.cleanupExpiredRecognitions(Date.now());
+    this.recalculateRewards();
   }
 
   ensureColumn(table, column, definition) {
@@ -99,6 +100,23 @@ class WeightStore {
     expired.forEach((row) => this.removeImage(row.image_filename));
   }
 
+  recalculateRewards() {
+    const profile = this.database.prepare("SELECT start_weight FROM profile WHERE id = 1").get();
+    const entries = this.database.prepare("SELECT id, weight, reward FROM weight_records ORDER BY record_date ASC, created_at ASC").all();
+    const updateReward = this.database.prepare("UPDATE weight_records SET reward = ? WHERE id = ?");
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      for (const entry of entries) {
+        const reward = Math.max(0, Math.round((profile.start_weight - entry.weight) * 200));
+        if (entry.reward !== reward) updateReward.run(reward, entry.id);
+      }
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
   close() {
     if (!this.database) return;
     this.database.close();
@@ -108,10 +126,12 @@ class WeightStore {
   getDashboard() {
     const profile = this.database.prepare("SELECT start_weight, goal_weight FROM profile WHERE id = 1").get();
     const rows = this.database.prepare("SELECT * FROM weight_records ORDER BY record_date DESC, created_at DESC").all();
+    const entries = rows.map(mapEntry);
     return {
       profile: { startWeight: profile.start_weight, goalWeight: profile.goal_weight },
       walletBase: 0,
-      entries: rows.map(mapEntry)
+      wallet: entries[0]?.reward || 0,
+      entries
     };
   }
 
@@ -147,7 +167,10 @@ class WeightStore {
     const recordDate = dateKey(pending.created_at, this.timeZone);
     const existing = this.database.prepare("SELECT * FROM weight_records WHERE record_date = ?").get(recordDate);
     const previous = this.database.prepare("SELECT weight FROM weight_records WHERE record_date < ? ORDER BY record_date DESC LIMIT 1").get(recordDate);
-    const reward = previous ? Math.max(0, Math.round((previous.weight - pending.weight) * 200)) : 0;
+    const profile = this.database.prepare("SELECT start_weight FROM profile WHERE id = 1").get();
+    const previousReward = previous ? Math.max(0, Math.round((profile.start_weight - previous.weight) * 200)) : 0;
+    const reward = Math.max(0, Math.round((profile.start_weight - pending.weight) * 200));
+    const rewardDelta = Math.max(0, reward - previousReward);
     const entryId = existing?.id || randomUUID();
     const createdAt = existing?.created_at || new Date(pending.created_at).toISOString();
     const extension = pending.image_filename ? path.extname(pending.image_filename).toLowerCase() : "";
@@ -184,9 +207,10 @@ class WeightStore {
       throw error;
     }
     if (imageMoved && existing?.image_filename && existing.image_filename !== imageFilename) this.removeImage(existing.image_filename);
+    this.recalculateRewards();
 
     const entry = mapEntry(this.database.prepare("SELECT * FROM weight_records WHERE record_date = ?").get(recordDate));
-    return { dashboard: this.getDashboard(), entry, replaced: Boolean(existing) };
+    return { dashboard: this.getDashboard(), entry, rewardDelta, replaced: Boolean(existing) };
   }
 
   updateProfile(startWeight, goalWeight) {
@@ -199,6 +223,7 @@ class WeightStore {
       throw Object.assign(new Error("目标体重需要低于起始体重"), { code: "INVALID_PROFILE" });
     }
     this.database.prepare("UPDATE profile SET start_weight = ?, goal_weight = ?, updated_at = ? WHERE id = 1").run(start, goal, new Date().toISOString());
+    this.recalculateRewards();
     return this.getDashboard();
   }
 
@@ -212,6 +237,7 @@ class WeightStore {
       throw Object.assign(new Error("体重记录不存在"), { code: "ENTRY_NOT_FOUND", statusCode: 404 });
     }
     this.removeImage(existing?.image_filename);
+    this.recalculateRewards();
     return this.getDashboard();
   }
 
